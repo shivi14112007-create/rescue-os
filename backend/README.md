@@ -22,11 +22,12 @@ Open http://127.0.0.1:8000/docs for interactive API testing (Swagger UI).
 
 | Method | Path | What it does |
 |---|---|---|
+| POST | `/batches/preview` | Live preview of the recommendation — does NOT save to DB |
 | POST | `/batches` | Seller logs a batch → auto shelf-life estimate + agent recommendation |
 | GET | `/batches` | List all batches (optional `?status=risk`) |
 | GET | `/batches/{id}` | Single batch detail |
 | POST | `/batches/{id}/claim` | Buyer/NGO claims a batch |
-| GET | `/impact` | Aggregate metrics: kg rescued, batches saved |
+| GET | `/impact` | Aggregate metrics: kg listed/rescued, revenue recovered, batches saved |
 
 ## Example: create a batch
 

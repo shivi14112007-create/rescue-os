@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db, get_conn, row_to_dict
-from app.models import BatchCreate, ClaimRequest, BatchResponse
+from app.models import BatchCreate, ClaimRequest, BatchResponse, BatchPreviewRequest, BatchPreviewResponse
 from app.shelf_life import estimate_remaining_shelf_life, classify_status
 from app.agent import get_agent_recommendation
 
@@ -38,6 +38,42 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
+
+
+@app.post("/batches/preview", response_model=BatchPreviewResponse)
+def preview_batch(batch: BatchPreviewRequest):
+    """
+    Live preview of the AI recommendation as the seller fills the form -
+    does NOT save anything to the database. Used for the 'AI Recommendation
+    Preview' panel that updates before the seller hits Submit.
+    """
+    remaining_days = estimate_remaining_shelf_life(
+        produce_type=batch.produce_type,
+        harvest_date=batch.harvest_date,
+        storage_condition=batch.storage_condition,
+    )
+    status = classify_status(remaining_days)
+
+    recommendation = get_agent_recommendation(
+        produce_type=batch.produce_type,
+        remaining_days=remaining_days,
+        quantity_kg=batch.quantity_kg,
+        location=batch.location,
+    )
+
+    discounted_price = None
+    if batch.price_per_kg and recommendation["action"] == "markdown":
+        discounted_price = round(batch.price_per_kg * (1 - recommendation.get("discount_pct", 0) / 100), 2)
+
+    return {
+        "remaining_shelf_life_days": remaining_days,
+        "status": status,
+        "recommended_action": recommendation["action"],
+        "discount_pct": recommendation.get("discount_pct", 0),
+        "agent_reasoning": recommendation["reasoning"],
+        "agent_source": recommendation.get("source", "unknown"),
+        "discounted_price_per_kg": discounted_price,
+    }
 
 
 @app.post("/batches", response_model=BatchResponse)
@@ -62,13 +98,14 @@ def create_batch(batch: BatchCreate):
             """
             INSERT INTO batches (
                 produce_type, quantity_kg, harvest_date, storage_condition,
-                location, seller_name, remaining_shelf_life_days, status,
+                location, seller_name, price_per_kg, notes, remaining_shelf_life_days, status,
                 recommended_action, discount_pct, agent_reasoning, agent_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch.produce_type, batch.quantity_kg, batch.harvest_date.isoformat(),
                 batch.storage_condition, batch.location, batch.seller_name,
+                batch.price_per_kg, batch.notes,
                 remaining_days, status,
                 recommendation["action"], recommendation.get("discount_pct", 0),
                 recommendation["reasoning"], recommendation.get("source", "unknown"),

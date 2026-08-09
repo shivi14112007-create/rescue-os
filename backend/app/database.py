@@ -22,6 +22,8 @@ def init_db():
                 storage_condition TEXT NOT NULL,
                 location TEXT NOT NULL,
                 seller_name TEXT,
+                price_per_kg REAL,
+                notes TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
 
                 -- computed fields (filled after estimation + agent call)

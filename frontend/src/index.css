@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #F6F8F7;
+  font-family: 'Inter', sans-serif;
+  color: #1A2420;
+}
+
+.input {
+  width: 100%;
+  background-color: #FFFFFF;
+  border: 1px solid #E5E9E7;
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.875rem;
+  color: #1A2420;
+}
+.input:focus {
+  outline: none;
+  border-color: #1E7A46;
+  box-shadow: 0 0 0 3px rgba(30, 122, 70, 0.12);
+}
+.input::placeholder {
+  color: #9CA8A2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -20,6 +20,23 @@ class BatchCreate(BaseModel):
     storage_condition: str = Field(..., examples=["room_temp", "cold_storage", "refrigerated"])
     location: str = Field(..., examples=["Azadpur Mandi, Delhi"])
     seller_name: Optional[str] = None
+    price_per_kg: Optional[float] = Field(None, gt=0, examples=[30])
+    notes: Optional[str] = None
+
+
+class BatchPreviewRequest(BatchCreate):
+    """Same shape as BatchCreate - used for the live 'AI Recommendation Preview' before submit."""
+    pass
+
+
+class BatchPreviewResponse(BaseModel):
+    remaining_shelf_life_days: float
+    status: str
+    recommended_action: str
+    discount_pct: float
+    agent_reasoning: str
+    agent_source: str
+    discounted_price_per_kg: Optional[float] = None
 
 
 class ClaimRequest(BaseModel):
@@ -41,5 +58,7 @@ class BatchResponse(BaseModel):
     discount_pct: Optional[float]
     agent_reasoning: Optional[str]
     agent_source: Optional[str]
+    price_per_kg: Optional[float]
+    notes: Optional[str]
     claimed_by: Optional[str]
     claimed_at: Optional[str]
