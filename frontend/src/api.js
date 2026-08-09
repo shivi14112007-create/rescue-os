@@ -32,11 +32,18 @@ export async function listBatches(status) {
   return handleResponse(res);
 }
 
-export async function claimBatch(id, claimedBy) {
+export async function claimBatch(id, claimedBy, contact) {
   const res = await fetch(`${BASE_URL}/batches/${id}/claim`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ claimed_by: claimedBy }),
+    body: JSON.stringify({ claimed_by: claimedBy, contact: contact || null }),
+  });
+  return handleResponse(res);
+}
+
+export async function completeBatch(id) {
+  const res = await fetch(`${BASE_URL}/batches/${id}/complete`, {
+    method: "POST",
   });
   return handleResponse(res);
 }

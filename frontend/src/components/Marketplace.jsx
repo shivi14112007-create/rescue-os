@@ -23,8 +23,11 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
   const [search, setSearch] = useState("");
   const [claimingId, setClaimingId] = useState(null);
   const [nameInput, setNameInput] = useState("");
+  const [contactInput, setContactInput] = useState("");
 
-  const available = batches.filter((b) => b.status !== "claimed" && b.recommended_action !== "hold");
+  const available = batches.filter(
+    (b) => !["claimed", "completed"].includes(b.status) && b.recommended_action !== "hold"
+  );
 
   const filtered = available.filter((b) => {
     const matchesFilter = filter === "all" || b.recommended_action === filter;
@@ -37,10 +40,11 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
 
   async function handleClaim(id) {
     if (!nameInput.trim()) return;
-    const updated = await claimBatch(id, nameInput.trim());
+    const updated = await claimBatch(id, nameInput.trim(), contactInput.trim());
     onClaim(updated);
     setClaimingId(null);
     setNameInput("");
+    setContactInput("");
   }
 
   return (
@@ -123,7 +127,7 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
 
                 <div className="mt-auto pt-3 flex flex-col gap-2">
                   {claimingId === b.id ? (
-                    <div className="flex gap-1.5">
+                    <div className="flex flex-col gap-1.5">
                       <input
                         autoFocus
                         value={nameInput}
@@ -131,12 +135,18 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
                         placeholder="Your name / org"
                         className="input text-xs py-1.5"
                       />
+                      <input
+                        value={contactInput}
+                        onChange={(e) => setContactInput(e.target.value)}
+                        placeholder="Phone (optional)"
+                        className="input text-xs py-1.5"
+                      />
                       <button
                         onClick={() => handleClaim(b.id)}
                         disabled={!nameInput.trim()}
-                        className="bg-brand text-white text-xs font-semibold px-3 rounded-lg disabled:opacity-50"
+                        className="bg-brand text-white text-xs font-semibold py-1.5 rounded-lg disabled:opacity-50"
                       >
-                        Go
+                        Confirm Claim
                       </button>
                     </div>
                   ) : (

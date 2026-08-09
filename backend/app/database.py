@@ -36,10 +36,50 @@ def init_db():
 
                 -- marketplace fields
                 claimed_by TEXT,
-                claimed_at TEXT
+                claimed_contact TEXT,
+                claimed_at TEXT,
+                completed_at TEXT              -- set when seller confirms pickup actually happened
             )
         """)
         conn.commit()
+        _run_migrations(conn)
+
+
+def _run_migrations(conn):
+    """
+    Defensive migration: checks EVERY column the app expects and adds
+    whichever ones are missing from the existing table. This makes the
+    app self-heal against any older/partial rescue_os.db (e.g. one
+    created before price_per_kg, notes, or the claim/complete fields
+    existed) instead of crashing with 'no such column'.
+    """
+    expected_columns = {
+        "produce_type": "TEXT",
+        "quantity_kg": "REAL",
+        "harvest_date": "TEXT",
+        "storage_condition": "TEXT",
+        "location": "TEXT",
+        "seller_name": "TEXT",
+        "price_per_kg": "REAL",
+        "notes": "TEXT",
+        "created_at": "TEXT",
+        "remaining_shelf_life_days": "REAL",
+        "status": "TEXT",
+        "recommended_action": "TEXT",
+        "discount_pct": "REAL",
+        "agent_reasoning": "TEXT",
+        "agent_source": "TEXT",
+        "claimed_by": "TEXT",
+        "claimed_contact": "TEXT",
+        "claimed_at": "TEXT",
+        "completed_at": "TEXT",
+    }
+
+    existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(batches)").fetchall()}
+    for col, col_type in expected_columns.items():
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE batches ADD COLUMN {col} {col_type}")
+    conn.commit()
 
 
 @contextmanager

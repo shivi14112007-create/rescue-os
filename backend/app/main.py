@@ -6,7 +6,8 @@ Endpoints:
   GET  /batches             - list all batches (dashboard feed)
   GET  /batches/{id}        - single batch detail
   POST /batches/{id}/claim  - buyer/NGO claims a discounted/donated batch
-  GET  /impact              - aggregate impact metrics (kg saved, batches rescued)
+  POST /batches/{id}/complete - seller confirms a claimed batch was actually picked up
+  GET  /impact              - aggregate impact metrics (kg saved, batches rescued, revenue recovered)
 
 Run locally:
   pip install -r requirements.txt
@@ -20,7 +21,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db, get_conn, row_to_dict
-from app.models import BatchCreate, ClaimRequest, BatchResponse, BatchPreviewRequest, BatchPreviewResponse
+from app.models import (
+    BatchCreate, ClaimRequest, BatchResponse, BatchPreviewRequest,
+    BatchPreviewResponse, ImpactResponse,
+)
 from app.shelf_life import estimate_remaining_shelf_life, classify_status
 from app.agent import get_agent_recommendation
 
@@ -59,6 +63,7 @@ def preview_batch(batch: BatchPreviewRequest):
         remaining_days=remaining_days,
         quantity_kg=batch.quantity_kg,
         location=batch.location,
+        storage_condition=batch.storage_condition,
     )
 
     discounted_price = None
@@ -91,6 +96,7 @@ def create_batch(batch: BatchCreate):
         remaining_days=remaining_days,
         quantity_kg=batch.quantity_kg,
         location=batch.location,
+        storage_condition=batch.storage_condition,
     )
 
     with get_conn() as conn:
@@ -149,12 +155,12 @@ def claim_batch(batch_id: int, claim: ClaimRequest):
         row = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Batch not found")
-        if row["status"] == "claimed":
+        if row["status"] in ("claimed", "completed"):
             raise HTTPException(status_code=409, detail="Batch already claimed")
 
         conn.execute(
-            "UPDATE batches SET status = 'claimed', claimed_by = ?, claimed_at = ? WHERE id = ?",
-            (claim.claimed_by, datetime.now().isoformat(), batch_id),
+            "UPDATE batches SET status = 'claimed', claimed_by = ?, claimed_contact = ?, claimed_at = ? WHERE id = ?",
+            (claim.claimed_by, claim.contact, datetime.now().isoformat(), batch_id),
         )
         conn.commit()
         updated = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
@@ -162,26 +168,89 @@ def claim_batch(batch_id: int, claim: ClaimRequest):
     return row_to_dict(updated)
 
 
-@app.get("/impact")
+@app.post("/batches/{batch_id}/complete", response_model=BatchResponse)
+def complete_batch(batch_id: int):
+    """
+    Seller confirms the claimed batch was actually picked up. This turns an
+    unverified claim into a verified rescue for the impact dashboard - so
+    'kg rescued' reflects produce that really left the mandi, not just a
+    claim someone made and never followed through on.
+    """
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if row["status"] != "claimed":
+            raise HTTPException(status_code=400, detail="Batch must be claimed before it can be marked picked up")
+
+        conn.execute(
+            "UPDATE batches SET status = 'completed', completed_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), batch_id),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+
+    return row_to_dict(updated)
+
+
+@app.get("/impact", response_model=ImpactResponse)
 def get_impact_metrics():
-    """Aggregate metrics for the dashboard 'impact' counter - the strongest demo visual."""
+    """
+    Aggregate metrics for the dashboard 'impact' counter - the strongest demo visual.
+
+    NOTE: 'rescued' counts both claimed and completed batches (produce that's
+    been taken off the at-risk pile), while batches_in_progress/kg_in_progress
+    isolate the ones that are claimed but not yet confirmed picked up, so the
+    UI can show "verified" vs "in progress" if it wants to.
+    """
     with get_conn() as conn:
         total_batches = conn.execute("SELECT COUNT(*) as c FROM batches").fetchone()["c"]
-        claimed = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'claimed'").fetchone()["c"]
+        total_kg_listed = conn.execute(
+            "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches"
+        ).fetchone()["total"]
+
         expired = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'expired'").fetchone()["c"]
+
+        rescued_count = conn.execute(
+            "SELECT COUNT(*) as c FROM batches WHERE status IN ('claimed', 'completed')"
+        ).fetchone()["c"]
         kg_rescued = conn.execute(
+            "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches WHERE status IN ('claimed', 'completed')"
+        ).fetchone()["total"]
+
+        in_progress_count = conn.execute(
+            "SELECT COUNT(*) as c FROM batches WHERE status = 'claimed'"
+        ).fetchone()["c"]
+        kg_in_progress = conn.execute(
             "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches WHERE status = 'claimed'"
         ).fetchone()["total"]
+
         kg_at_risk = conn.execute(
             "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches WHERE status IN ('risk', 'urgent')"
         ).fetchone()["total"]
 
+        # Revenue recovered = discounted price x quantity, for rescued batches that had a listed price.
+        priced_rescued = conn.execute(
+            """
+            SELECT quantity_kg, price_per_kg, discount_pct FROM batches
+            WHERE status IN ('claimed', 'completed') AND price_per_kg IS NOT NULL
+            """
+        ).fetchall()
+        revenue_recovered = sum(
+            r["quantity_kg"] * r["price_per_kg"] * (1 - (r["discount_pct"] or 0) / 100)
+            for r in priced_rescued
+        )
+
     return {
         "total_batches_logged": total_batches,
-        "batches_rescued": claimed,
+        "total_kg_listed": round(total_kg_listed, 1),
+        "batches_rescued": rescued_count,
+        "batches_in_progress": in_progress_count,
         "batches_expired": expired,
-        "kg_rescued": kg_rescued,
-        "kg_currently_at_risk": kg_at_risk,
+        "kg_rescued": round(kg_rescued, 1),
+        "kg_in_progress": round(kg_in_progress, 1),
+        "kg_currently_at_risk": round(kg_at_risk, 1),
+        "revenue_recovered": round(revenue_recovered, 2),
     }
 
 

@@ -1,4 +1,5 @@
-import { X, Calendar, MapPin, Package, Thermometer, Sparkles } from "lucide-react";
+import { X, Calendar, MapPin, Package, Thermometer, Sparkles, Phone } from "lucide-react";
+import { completeBatch } from "../api";
 import ActionBadge from "./ActionBadge";
 import ProduceImage from "./ProduceImage";
 
@@ -9,8 +10,13 @@ const TILE_BG = {
   donate: "bg-donate-light",
 };
 
-export default function BatchDetail({ batch, onClose }) {
+export default function BatchDetail({ batch, onClose, onComplete }) {
   if (!batch) return null;
+
+  async function handleMarkPickedUp() {
+    const updated = await completeBatch(batch.id);
+    onComplete?.(updated);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -68,9 +74,25 @@ export default function BatchDetail({ batch, onClose }) {
           )}
 
           {batch.claimed_by && (
-            <div className="bg-brand-light text-brand text-sm font-medium rounded-lg px-3 py-2">
-              Claimed by {batch.claimed_by}
+            <div className="bg-brand-light rounded-lg px-3 py-2.5 flex flex-col gap-1.5">
+              <span className="text-brand text-sm font-medium">
+                {batch.status === "completed" ? "Rescued ✓ — picked up by" : "Claimed by"} {batch.claimed_by}
+              </span>
+              {batch.claimed_contact && (
+                <span className="flex items-center gap-1.5 text-brand text-xs">
+                  <Phone size={12} /> {batch.claimed_contact}
+                </span>
+              )}
             </div>
+          )}
+
+          {batch.status === "claimed" && (
+            <button
+              onClick={handleMarkPickedUp}
+              className="w-full bg-markdown text-white text-sm font-semibold py-2 rounded-lg hover:bg-markdown/90 transition-colors"
+            >
+              Mark as Picked Up
+            </button>
           )}
         </div>
       </div>

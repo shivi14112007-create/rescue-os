@@ -1,7 +1,7 @@
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 export default function ImpactSnapshot({ batches }) {
-  const claimed = batches.filter((b) => b.status === "claimed");
+  const claimed = batches.filter((b) => ["claimed", "completed"].includes(b.status));
   const soldViaMarkdown = claimed
     .filter((b) => b.recommended_action === "markdown")
     .reduce((s, b) => s + b.quantity_kg, 0);

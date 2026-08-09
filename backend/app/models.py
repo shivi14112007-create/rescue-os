@@ -41,6 +41,7 @@ class BatchPreviewResponse(BaseModel):
 
 class ClaimRequest(BaseModel):
     claimed_by: str = Field(..., examples=["Robin Hood Army - Delhi Chapter"])
+    contact: Optional[str] = Field(None, examples=["+91 98765 43210"])
 
 
 class BatchResponse(BaseModel):
@@ -61,4 +62,18 @@ class BatchResponse(BaseModel):
     price_per_kg: Optional[float]
     notes: Optional[str]
     claimed_by: Optional[str]
+    claimed_contact: Optional[str] = None
     claimed_at: Optional[str]
+    completed_at: Optional[str] = None
+
+
+class ImpactResponse(BaseModel):
+    total_batches_logged: int
+    total_kg_listed: float
+    batches_rescued: int
+    batches_in_progress: int
+    batches_expired: int
+    kg_rescued: float
+    kg_in_progress: float
+    kg_currently_at_risk: float
+    revenue_recovered: float

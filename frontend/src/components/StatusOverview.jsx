@@ -8,7 +8,7 @@ const CONFIG = {
 };
 
 export default function StatusOverview({ batches }) {
-  const active = batches.filter((b) => b.status !== "claimed");
+  const active = batches.filter((b) => !["claimed", "completed"].includes(b.status));
 
   const groups = ["hold", "markdown", "fast_track", "donate"].map((key) => {
     const items = active.filter((b) => b.recommended_action === key);

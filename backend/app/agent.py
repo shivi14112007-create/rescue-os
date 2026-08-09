@@ -22,6 +22,8 @@ from groq import Groq, GroqError
 from google import genai
 from google.genai.errors import APIError as GeminiAPIError
 
+from app.shelf_life import calculate_dynamic_discount
+
 # ---- Client setup (only initialized if the relevant key is present) ----
 
 groq_client = None
@@ -58,8 +60,18 @@ Guidelines:
 """
 
 
-def _rule_based_fallback(remaining_days: float, quantity_kg: float) -> dict:
-    """Deterministic backup logic - used if every LLM provider fails."""
+def _rule_based_fallback(
+    remaining_days: float,
+    quantity_kg: float,
+    produce_type: str,
+    storage_condition: str,
+) -> dict:
+    """
+    Deterministic backup logic - used if every LLM provider fails.
+    Discount is computed with a smooth urgency curve (see shelf_life.py)
+    instead of jumping between a couple of fixed numbers, so the offline
+    fallback still looks "smart" on stage.
+    """
     if remaining_days <= 0:
         return {
             "action": "donate",
@@ -69,17 +81,19 @@ def _rule_based_fallback(remaining_days: float, quantity_kg: float) -> dict:
         }
     elif remaining_days <= 1:
         action = "fast_track" if quantity_kg > 20 else "markdown"
+        discount = calculate_dynamic_discount(remaining_days, produce_type, storage_condition) if action == "markdown" else 0
         return {
             "action": action,
-            "discount_pct": 60 if action == "markdown" else 0,
+            "discount_pct": discount,
             "reasoning": "Less than a day of shelf life remains, so this batch needs to move immediately.",
             "source": "rule_based",
         }
     elif remaining_days <= 3:
+        discount = calculate_dynamic_discount(remaining_days, produce_type, storage_condition)
         return {
             "action": "markdown",
-            "discount_pct": 30,
-            "reasoning": "Shelf life is getting short, so a moderate discount will help move stock before it spoils.",
+            "discount_pct": discount,
+            "reasoning": f"Shelf life is getting short ({remaining_days} days left), so a {discount}% discount will help move stock before it spoils.",
             "source": "rule_based",
         }
     else:
@@ -138,6 +152,7 @@ def get_agent_recommendation(
     remaining_days: float,
     quantity_kg: float,
     location: str,
+    storage_condition: str = "room_temp",
 ) -> dict:
     """
     Returns dict: {action, discount_pct, reasoning, source}
@@ -165,4 +180,4 @@ def get_agent_recommendation(
             continue  # try the next provider in the chain
 
     # every provider failed (or none configured) - deterministic fallback
-    return _rule_based_fallback(remaining_days, quantity_kg)
+    return _rule_based_fallback(remaining_days, quantity_kg, produce_type, storage_condition)

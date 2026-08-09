@@ -68,3 +68,36 @@ def classify_status(remaining_days: float) -> str:
         return "risk"
     else:
         return "fresh"
+
+
+def total_shelf_life_days(produce_type: str, storage_condition: str) -> float:
+    """The full shelf life for this produce/storage combo (i.e. day 0 value)."""
+    base_days = BASE_SHELF_LIFE_DAYS.get(produce_type.lower(), DEFAULT_BASE_SHELF_LIFE)
+    multiplier = STORAGE_MULTIPLIERS.get(storage_condition, 1.0)
+    return base_days * multiplier
+
+
+def calculate_dynamic_discount(
+    remaining_days: float,
+    produce_type: str,
+    storage_condition: str,
+    floor_pct: int = 15,
+    ceiling_pct: int = 70,
+) -> int:
+    """
+    FEFO-style dynamic pricing: the discount scales smoothly with how much
+    of the batch's shelf life has already elapsed, instead of jumping
+    between a couple of fixed tiers. Used by the rule-based fallback so
+    even a fully offline demo shows "smart" pricing, not a flat number.
+
+    urgency = 0 (just harvested)         -> floor_pct discount
+    urgency = 1 (shelf life exhausted)   -> ceiling_pct discount
+    """
+    total_days = total_shelf_life_days(produce_type, storage_condition)
+    if total_days <= 0:
+        return ceiling_pct
+
+    urgency = 1 - (remaining_days / total_days)
+    urgency = max(0.0, min(urgency, 1.0))  # clamp to [0, 1]
+
+    return round(floor_pct + urgency * (ceiling_pct - floor_pct))

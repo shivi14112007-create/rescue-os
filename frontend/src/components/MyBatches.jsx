@@ -1,7 +1,13 @@
+import { completeBatch } from "../api";
 import ActionBadge from "./ActionBadge";
 import ProduceImage from "./ProduceImage";
 
-export default function MyBatches({ batches, onSelect }) {
+export default function MyBatches({ batches, onSelect, onComplete }) {
+  async function handleMarkPickedUp(id) {
+    const updated = await completeBatch(id);
+    onComplete(updated);
+  }
+
   return (
     <div>
       <h1 className="text-xl font-bold text-ink mb-1">My Batches</h1>
@@ -41,13 +47,24 @@ export default function MyBatches({ batches, onSelect }) {
                   <td className="px-5 py-3">
                     <ActionBadge action={b.recommended_action} discountPct={b.discount_pct} small />
                     {b.status === "claimed" && (
+                      <span className="ml-2 text-xs text-markdown font-medium">Claimed — awaiting pickup</span>
+                    )}
+                    {b.status === "completed" && (
                       <span className="ml-2 text-xs text-brand font-medium">Rescued ✓</span>
                     )}
                   </td>
                   <td className="px-5 py-3 text-muted">
                     {b.remaining_shelf_life_days <= 0 ? "Expired" : `${b.remaining_shelf_life_days}d`}
                   </td>
-                  <td className="px-5 py-3 text-right">
+                  <td className="px-5 py-3 text-right flex items-center justify-end gap-3">
+                    {b.status === "claimed" && (
+                      <button
+                        onClick={() => handleMarkPickedUp(b.id)}
+                        className="text-markdown text-xs font-medium hover:underline"
+                      >
+                        Mark Picked Up
+                      </button>
+                    )}
                     <button onClick={() => onSelect(b)} className="text-brand text-xs font-medium hover:underline">
                       View
                     </button>
