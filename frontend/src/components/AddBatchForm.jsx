@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { previewBatch, createBatch } from "../api";
+import { getBrowserLocation, reverseGeocode } from "../geo";
 import ActionBadge from "./ActionBadge";
-import { Sparkles } from "lucide-react";
+import { Sparkles, LocateFixed, Loader2 } from "lucide-react";
 
 const PRODUCE_OPTIONS = [
   "tomato", "banana", "mango", "apple", "potato",
@@ -20,6 +21,8 @@ const emptyForm = {
   harvest_date: "",
   storage_condition: "room_temp",
   location: "",
+  latitude: null,
+  longitude: null,
   seller_name: "",
   price_per_kg: "",
   notes: "",
@@ -31,9 +34,32 @@ export default function AddBatchForm({ sellerName, onBatchCreated }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState(null);
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  function updateLocationText(value) {
+    // Hand-typed edits invalidate any coordinates captured via "Use my location"
+    setForm((f) => ({ ...f, location: value, latitude: null, longitude: null }));
+  }
+
+  async function handleUseMyLocation() {
+    setLocating(true);
+    setLocateError(null);
+    try {
+      const { latitude, longitude } = await getBrowserLocation({ forceFresh: true });
+      const label = await reverseGeocode(latitude, longitude).catch(
+        () => `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+      );
+      setForm((f) => ({ ...f, location: label, latitude, longitude }));
+    } catch (err) {
+      setLocateError(err.message || "Couldn't get your location.");
+    } finally {
+      setLocating(false);
+    }
   }
 
   const canPreview = form.quantity_kg && form.harvest_date && form.location;
@@ -144,13 +170,29 @@ export default function AddBatchForm({ sellerName, onBatchCreated }) {
           </Field>
 
           <Field label="Current Location">
-            <input
-              type="text" required
-              value={form.location}
-              onChange={(e) => update("location", e.target.value)}
-              placeholder="e.g. Azadpur Mandi, Delhi"
-              className="input"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text" required
+                value={form.location}
+                onChange={(e) => updateLocationText(e.target.value)}
+                placeholder="e.g. Azadpur Mandi, Delhi"
+                className="input flex-1"
+              />
+              <button
+                type="button"
+                onClick={handleUseMyLocation}
+                disabled={locating}
+                title="Use my current location"
+                className="shrink-0 flex items-center gap-1.5 px-3 rounded-lg border border-border text-sm text-muted hover:text-brand hover:border-brand disabled:opacity-50 transition-colors"
+              >
+                {locating ? <Loader2 size={15} className="animate-spin" /> : <LocateFixed size={15} />}
+                <span className="hidden sm:inline">{locating ? "Locating…" : "Use my location"}</span>
+              </button>
+            </div>
+            {form.latitude && (
+              <p className="text-xs text-brand mt-1">📍 Location captured</p>
+            )}
+            {locateError && <p className="text-xs text-donate mt-1">{locateError}</p>}
           </Field>
         </div>
 

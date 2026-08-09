@@ -26,9 +26,15 @@ export async function previewBatch(batch) {
   return handleResponse(res);
 }
 
-export async function listBatches(status) {
-  const url = status ? `${BASE_URL}/batches?status=${status}` : `${BASE_URL}/batches`;
-  const res = await fetch(url);
+export async function listBatches(status, near) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (near) {
+    params.set("near_lat", near.latitude);
+    params.set("near_lng", near.longitude);
+  }
+  const query = params.toString();
+  const res = await fetch(`${BASE_URL}/batches${query ? `?${query}` : ""}`);
   return handleResponse(res);
 }
 

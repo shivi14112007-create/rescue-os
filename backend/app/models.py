@@ -19,6 +19,8 @@ class BatchCreate(BaseModel):
     harvest_date: date
     storage_condition: str = Field(..., examples=["room_temp", "cold_storage", "refrigerated"])
     location: str = Field(..., examples=["Azadpur Mandi, Delhi"])
+    latitude: Optional[float] = Field(None, ge=-90, le=90, examples=[28.7069])
+    longitude: Optional[float] = Field(None, ge=-180, le=180, examples=[77.1746])
     seller_name: Optional[str] = None
     price_per_kg: Optional[float] = Field(None, gt=0, examples=[30])
     notes: Optional[str] = None
@@ -51,6 +53,8 @@ class BatchResponse(BaseModel):
     harvest_date: str
     storage_condition: str
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     seller_name: Optional[str]
     created_at: str
     remaining_shelf_life_days: Optional[float]

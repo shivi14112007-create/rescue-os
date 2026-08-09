@@ -1,14 +1,26 @@
 import { useState } from "react";
 import { claimBatch } from "../api";
+import { getBrowserLocation, filterAndSortByDistance } from "../geo";
 import ActionBadge from "./ActionBadge";
 import ProduceImage from "./ProduceImage";
-import { MapPin, Search } from "lucide-react";
+import { MapPin, Search, LocateFixed, Loader2 } from "lucide-react";
 
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "markdown", label: "Markdown" },
   { key: "fast_track", label: "Fast-Track" },
   { key: "donate", label: "Donate" },
+];
+
+// Radius options mirror the "shops within N meters" pattern used by production
+// food-pickup apps (e.g. GoMocha's 4km default radius) - lets a buyer/NGO with a
+// limited pickup range (bike, foot) hide anything impractically far away.
+const RADIUS_OPTIONS = [
+  { key: "any", label: "Any distance", km: null },
+  { key: "5", label: "Within 5 km", km: 5 },
+  { key: "10", label: "Within 10 km", km: 10 },
+  { key: "25", label: "Within 25 km", km: 25 },
+  { key: "50", label: "Within 50 km", km: 50 },
 ];
 
 const TILE_BG = {
@@ -24,6 +36,10 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
   const [claimingId, setClaimingId] = useState(null);
   const [nameInput, setNameInput] = useState("");
   const [contactInput, setContactInput] = useState("");
+  const [myLocation, setMyLocation] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [locateError, setLocateError] = useState(null);
+  const [radiusKm, setRadiusKm] = useState(null);
 
   const available = batches.filter(
     (b) => !["claimed", "completed"].includes(b.status) && b.recommended_action !== "hold"
@@ -37,6 +53,32 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
       b.location.toLowerCase().includes(search.toLowerCase());
     return matchesFilter && matchesSearch;
   });
+
+  // When "Near Me" is active: attach each batch's distance, sort closest-first, and
+  // (optionally) drop anything outside the chosen radius. Batches without logged
+  // coordinates sort to the end - they're not hidden unless a radius is set, since
+  // we can't know whether they're actually in or out of range.
+  const withDistance = myLocation
+    ? filterAndSortByDistance(filtered, myLocation, { radiusKm })
+    : filtered;
+
+  async function handleNearMe() {
+    if (myLocation) {
+      setMyLocation(null); // toggle off
+      setRadiusKm(null);
+      return;
+    }
+    setLocating(true);
+    setLocateError(null);
+    try {
+      const loc = await getBrowserLocation();
+      setMyLocation(loc);
+    } catch (err) {
+      setLocateError(err.message || "Couldn't get your location.");
+    } finally {
+      setLocating(false);
+    }
+  }
 
   async function handleClaim(id) {
     if (!nameInput.trim()) return;
@@ -54,16 +96,51 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
           <h1 className="text-xl font-bold text-ink">Marketplace</h1>
           <p className="text-muted text-sm">Find discounted and donated produce batches</p>
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search produce or location..."
-            className="input pl-9"
-          />
+        <div className="flex gap-2">
+          <div className="relative w-full sm:w-72">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search produce or location..."
+              className="input pl-9"
+            />
+          </div>
+          <button
+            onClick={handleNearMe}
+            disabled={locating}
+            title="Sort by distance from your current location"
+            className={`shrink-0 flex items-center gap-1.5 px-3 rounded-lg border text-sm font-medium transition-colors disabled:opacity-50 ${
+              myLocation
+                ? "bg-brand text-white border-brand"
+                : "border-border text-muted hover:text-brand hover:border-brand"
+            }`}
+          >
+            {locating ? <Loader2 size={15} className="animate-spin" /> : <LocateFixed size={15} />}
+            <span className="hidden sm:inline">{myLocation ? "Near Me ✓" : "Near Me"}</span>
+          </button>
         </div>
       </div>
+      {locateError && <p className="text-xs text-donate -mt-3 mb-4">{locateError}</p>}
+
+      {myLocation && (
+        <div className="flex items-center gap-2 mb-4 -mt-1">
+          <span className="text-xs text-muted">Radius:</span>
+          {RADIUS_OPTIONS.map((r) => (
+            <button
+              key={r.key}
+              onClick={() => setRadiusKm(r.km)}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                radiusKm === r.km
+                  ? "bg-ink text-white"
+                  : "bg-panel border border-border text-muted hover:text-ink"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-2 mb-5">
         {FILTERS.map((f) => (
@@ -79,13 +156,15 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
         ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {withDistance.length === 0 ? (
         <div className="bg-panel border border-border rounded-xl p-10 text-center text-muted shadow-card">
-          No batches match right now — check back soon.
+          {myLocation && radiusKm
+            ? `No batches within ${radiusKm} km right now — try a wider radius.`
+            : "No batches match right now — check back soon."}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {filtered.map((b) => (
+          {withDistance.map((b) => (
             <div key={b.id} className="bg-panel border border-border rounded-xl overflow-hidden shadow-card flex flex-col">
               <div className={`relative h-32 ${TILE_BG[b.recommended_action] || "bg-brand-light"}`}>
                 <ProduceImage
@@ -103,6 +182,11 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
                 <p className="text-muted text-xs flex items-center gap-1">
                   {b.quantity_kg} kg &middot;
                   <MapPin size={12} /> {b.location}
+                  {Number.isFinite(b._distanceKm) && (
+                    <span className="text-brand font-medium">
+                      &middot; {b._distanceKm < 1 ? "<1" : b._distanceKm.toFixed(1)} km away
+                    </span>
+                  )}
                 </p>
                 <p className="text-muted text-xs">
                   {b.remaining_shelf_life_days <= 0 ? "Expired" : `${b.remaining_shelf_life_days} days left`}

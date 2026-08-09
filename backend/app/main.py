@@ -17,6 +17,7 @@ Run locally:
 Then open http://127.0.0.1:8000/docs for interactive API docs.
 """
 from datetime import date, datetime
+from math import radians, sin, cos, sqrt, atan2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -42,6 +43,16 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
+
+
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance between two lat/lng points, in kilometers."""
+    R = 6371.0
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2 - lat1)
+    dlambda = radians(lng2 - lng1)
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
 
 @app.post("/batches/preview", response_model=BatchPreviewResponse)
@@ -104,14 +115,15 @@ def create_batch(batch: BatchCreate):
             """
             INSERT INTO batches (
                 produce_type, quantity_kg, harvest_date, storage_condition,
-                location, seller_name, price_per_kg, notes, remaining_shelf_life_days, status,
+                location, latitude, longitude, seller_name, price_per_kg, notes,
+                remaining_shelf_life_days, status,
                 recommended_action, discount_pct, agent_reasoning, agent_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch.produce_type, batch.quantity_kg, batch.harvest_date.isoformat(),
-                batch.storage_condition, batch.location, batch.seller_name,
-                batch.price_per_kg, batch.notes,
+                batch.storage_condition, batch.location, batch.latitude, batch.longitude,
+                batch.seller_name, batch.price_per_kg, batch.notes,
                 remaining_days, status,
                 recommendation["action"], recommendation.get("discount_pct", 0),
                 recommendation["reasoning"], recommendation.get("source", "unknown"),
@@ -125,8 +137,18 @@ def create_batch(batch: BatchCreate):
 
 
 @app.get("/batches", response_model=list[BatchResponse])
-def list_batches(status: str | None = None):
-    """List all batches, optionally filtered by status (fresh/risk/urgent/expired/claimed)."""
+def list_batches(
+    status: str | None = None,
+    near_lat: float | None = None,
+    near_lng: float | None = None,
+):
+    """
+    List all batches, optionally filtered by status (fresh/risk/urgent/expired/claimed).
+
+    Pass near_lat/near_lng (e.g. the buyer's current GPS position) to sort results by
+    distance from that point instead of recency - nearest batch first. Batches that
+    don't have coordinates logged sort to the end since distance can't be computed.
+    """
     with get_conn() as conn:
         if status:
             rows = conn.execute(
@@ -135,7 +157,17 @@ def list_batches(status: str | None = None):
         else:
             rows = conn.execute("SELECT * FROM batches ORDER BY created_at DESC").fetchall()
 
-    return [row_to_dict(r) for r in rows]
+    batches = [row_to_dict(r) for r in rows]
+
+    if near_lat is not None and near_lng is not None:
+        def distance_km(b):
+            if b["latitude"] is None or b["longitude"] is None:
+                return float("inf")
+            return haversine_km(near_lat, near_lng, b["latitude"], b["longitude"])
+
+        batches.sort(key=distance_km)
+
+    return batches
 
 
 @app.get("/batches/{batch_id}", response_model=BatchResponse)
@@ -146,6 +178,167 @@ def get_batch(batch_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Batch not found")
     return row_to_dict(row)
+
+
+@app.post("/automation/refresh")
+def refresh_batch_risk():
+    """
+    Recalculate shelf life and status for active batches.
+
+    This endpoint is intended to be called automatically by n8n.
+    It keeps the Rescue OS risk state dynamic instead of relying only
+    on the values calculated when a batch was originally created.
+    """
+    updated_batches = []
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM batches
+            WHERE status NOT IN ('claimed', 'completed')
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+
+        for row in rows:
+            remaining_days = estimate_remaining_shelf_life(
+                produce_type=row["produce_type"],
+                harvest_date=date.fromisoformat(row["harvest_date"]),
+                storage_condition=row["storage_condition"],
+            )
+
+            new_status = classify_status(remaining_days)
+
+            conn.execute(
+                """
+                UPDATE batches
+                SET remaining_shelf_life_days = ?,
+                    status = ?
+                WHERE id = ?
+                """,
+                (
+                    remaining_days,
+                    new_status,
+                    row["id"],
+                ),
+            )
+
+            updated_batches.append({
+                "id": row["id"],
+                "produce_type": row["produce_type"],
+                "quantity_kg": row["quantity_kg"],
+                "location": row["location"],
+                "remaining_shelf_life_days": remaining_days,
+                "old_status": row["status"],
+                "new_status": new_status,
+                "recommended_action": row["recommended_action"],
+            })
+
+        conn.commit()
+
+    return {
+        "success": True,
+        "count": len(updated_batches),
+        "updated_batches": updated_batches,
+    }
+
+
+@app.get("/automation/critical")
+def get_critical_batches():
+    """
+    Return batches that currently need rescue attention.
+
+    Used by n8n to identify batches that should enter the
+    Rescue Autopilot workflow.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM batches
+            WHERE status IN ('risk', 'urgent', 'expired')
+            ORDER BY
+                CASE status
+                    WHEN 'expired' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'risk' THEN 3
+                    ELSE 4
+                END,
+                remaining_shelf_life_days ASC
+            """
+        ).fetchall()
+
+    return [row_to_dict(row) for row in rows]
+
+
+@app.post("/automation/{batch_id}/escalate")
+def escalate_batch(batch_id: int):
+    """
+    Move an unrescued batch to the next rescue strategy.
+
+    Rescue progression:
+        hold -> markdown -> fast_track -> donate
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Batch not found",
+            )
+
+        if row["status"] in ("claimed", "completed"):
+            return {
+                "success": False,
+                "message": "Batch has already been rescued.",
+                "batch": row_to_dict(row),
+            }
+
+        current_action = row["recommended_action"]
+
+        escalation_map = {
+            None: "markdown",
+            "hold": "markdown",
+            "markdown": "fast_track",
+            "fast_track": "donate",
+            "donate": "donate",
+        }
+
+        next_action = escalation_map.get(
+            current_action,
+            "donate",
+        )
+
+        conn.execute(
+            """
+            UPDATE batches
+            SET recommended_action = ?
+            WHERE id = ?
+            """,
+            (
+                next_action,
+                batch_id,
+            ),
+        )
+
+        conn.commit()
+
+        updated = conn.execute(
+            "SELECT * FROM batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+
+    return {
+        "success": True,
+        "previous_action": current_action,
+        "new_action": next_action,
+        "batch": row_to_dict(updated),
+    }
 
 
 @app.post("/batches/{batch_id}/claim", response_model=BatchResponse)
