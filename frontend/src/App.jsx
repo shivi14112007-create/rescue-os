@@ -9,7 +9,9 @@ import AddBatchForm from "./components/AddBatchForm";
 import MyBatches from "./components/MyBatches";
 import Marketplace from "./components/Marketplace";
 import BatchDetail from "./components/BatchDetail";
+import LocationMap from "./components/LocationMap";
 import { Bell, MapPin } from "lucide-react";
+
 
 const SELLER_NAME = "Ramesh Yadav";
 
@@ -82,16 +84,24 @@ export default function App() {
             </div>
           )}
 
-          {page === "dashboard" && (
-            <div className="flex flex-col gap-5">
-              <StatCards impact={impact} />
-              <StatusOverview batches={batches} />
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
-                <RecentBatchesTable batches={batches} onSelect={setSelectedBatch} />
-                <ImpactSnapshot batches={batches} />
-              </div>
-            </div>
-          )}
+         {page === "dashboard" && (
+  <div className="flex flex-col gap-5">
+    <StatCards impact={impact} />
+
+    <StatusOverview batches={batches} />
+
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+      <RecentBatchesTable
+        batches={batches}
+        onSelect={setSelectedBatch}
+      />
+
+      <ImpactSnapshot batches={batches} />
+    </div>
+
+    <LocationMap />
+  </div>
+)}
 
           {page === "add" && (
             <AddBatchForm sellerName={SELLER_NAME} onBatchCreated={handleBatchCreated} />
