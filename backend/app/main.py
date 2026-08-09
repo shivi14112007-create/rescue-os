@@ -16,6 +16,9 @@ Run locally:
   uvicorn app.main:app --reload
 Then open http://127.0.0.1:8000/docs for interactive API docs.
 """
+from dotenv import load_dotenv
+load_dotenv()  # must run before app.agent is imported, since it reads keys at import time
+
 from datetime import date, datetime
 from math import radians, sin, cos, sqrt, atan2
 from fastapi import FastAPI, HTTPException
@@ -338,6 +341,78 @@ def escalate_batch(batch_id: int):
         "previous_action": current_action,
         "new_action": next_action,
         "batch": row_to_dict(updated),
+    }
+
+
+@app.get("/automation/{batch_id}/match")
+def match_batch(batch_id: int, limit: int = 3):
+    """
+    Rescue Match — proactively suggest the nearest registered NGOs/buyers
+    for this batch instead of waiting for someone to browse the marketplace.
+
+    Partner type is picked based on the batch's recommended_action:
+      donate                -> NGOs only
+      markdown / fast_track  -> buyers only (NGOs shown too if none found)
+      hold                   -> no match needed yet
+
+    Ranked by distance (haversine) from the batch's own coordinates.
+    Returns whatever contact fields each partner actually has (contact,
+    website, address, image_url) - the frontend falls back gracefully
+    when a field is missing instead of assuming a phone number exists.
+    """
+    with get_conn() as conn:
+        batch = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
+        if batch["latitude"] is None or batch["longitude"] is None:
+            return {
+                "batch_id": batch_id,
+                "matches": [],
+                "message": "Batch has no coordinates logged, cannot compute matches.",
+            }
+
+        action = batch["recommended_action"]
+        if action == "hold":
+            return {
+                "batch_id": batch_id,
+                "matches": [],
+                "message": "Batch is currently on hold, no rescue match needed yet.",
+            }
+
+        wanted_type = "ngo" if action == "donate" else "buyer"
+
+        partners = conn.execute(
+            "SELECT * FROM partners WHERE partner_type = ?", (wanted_type,)
+        ).fetchall()
+
+        # Fallback: if the preferred partner type is empty for some reason,
+        # widen the search to all partners rather than returning nothing.
+        if not partners:
+            partners = conn.execute("SELECT * FROM partners").fetchall()
+
+        scored = []
+        for p in partners:
+            dist = haversine_km(batch["latitude"], batch["longitude"], p["latitude"], p["longitude"])
+            scored.append({
+                "id": p["id"],
+                "name": p["name"],
+                "partner_type": p["partner_type"],
+                "contact": p["contact"],
+                "website": p["website"],
+                "address": p["address"],
+                "image_url": p["image_url"],
+                "notes": p["notes"],
+                "is_placeholder": bool(p["is_placeholder"]),
+                "distance_km": round(dist, 1),
+            })
+
+        scored.sort(key=lambda x: x["distance_km"])
+
+    return {
+        "batch_id": batch_id,
+        "recommended_action": action,
+        "matches": scored[:limit],
     }
 
 
