@@ -8,6 +8,7 @@ import {
   useMap
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { getNearbyPartners } from "../api";
 
 function ChangeMapView({ position }) {
   const map = useMap();
@@ -30,133 +31,46 @@ function LocationMap() {
   const [error, setError] = useState("");
 
   async function findNearbyPlaces(lat, lng) {
-    const radius = 5000;
-
-    const query = `
-      [out:json][timeout:10];
-
-      (
-        nwr[
-          "shop"~"supermarket|greengrocer|wholesale|fruit|vegetable"
-        ](around:${radius},${lat},${lng});
-
-        nwr[
-          "amenity"="marketplace"
-        ](around:${radius},${lat},${lng});
-
-        nwr[
-          "amenity"="food_bank"
-        ](around:${radius},${lat},${lng});
-
-        nwr[
-          "social_facility"="food_bank"
-        ](around:${radius},${lat},${lng});
-      );
-
-      out center tags;
-    `;
-
+    // Previously this called overpass-api.de directly from the browser -
+    // a single public mirror, no retry, no fallback. That's what made it
+    // flaky on the deployed site (rate-limited/blocked depending on the
+    // visitor's own network path) while "working" locally whenever that
+    // one mirror happened to respond. Now it goes through our own backend
+    // (/partners/nearby), which already has multi-mirror + widening-radius
+    // + caching + fail-soft logic (same code the "Suggested Rescue
+    // Matches" panel uses).
     try {
-      const response = await fetch(
-        "https://overpass-api.de/api/interpreter",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/x-www-form-urlencoded"
-          },
-          body: `data=${encodeURIComponent(query)}`
-        }
-      );
+      const data = await getNearbyPartners(lat, lng, 8);
 
-      if (!response.ok) {
-        throw new Error(
-          "Nearby places service unavailable"
-        );
-      }
+      const places = (data.matches || [])
+        .filter(
+          (p) =>
+            p.latitude !== undefined &&
+            p.latitude !== null &&
+            p.longitude !== undefined &&
+            p.longitude !== null
+        )
+        .map((p) => ({
+          id: p.id,
+          name: p.name || "Nearby Food Location",
+          type: p.partner_type === "ngo" ? "ngo" : "buyer",
+          lat: Number(p.latitude),
+          lng: Number(p.longitude),
+          category: p.partner_type === "ngo" ? "food_bank" : "market"
+        }));
 
-      const data = await response.json();
-
-      const places = data.elements
-        .map((place) => {
-          const placeLat =
-            place.lat ?? place.center?.lat;
-
-          const placeLng =
-            place.lon ?? place.center?.lon;
-
-          if (
-            placeLat === undefined ||
-            placeLng === undefined
-          ) {
-            return null;
-          }
-
-          const tags = place.tags || {};
-
-          let type = "buyer";
-
-          if (
-            tags.amenity === "food_bank" ||
-            tags.social_facility === "food_bank"
-          ) {
-            type = "ngo";
-          }
-
-          if (
-            tags.name === undefined &&
-            tags.shop === undefined &&
-            tags.amenity === undefined
-          ) {
-            return null;
-          }
-
-          const name =
-            tags.name ||
-            tags.operator ||
-            "Nearby Food Location";
-
-          return {
-            id: `${place.type}-${place.id}`,
-            name,
-            type,
-            lat: Number(placeLat),
-            lng: Number(placeLng),
-            category:
-              tags.shop ||
-              tags.amenity ||
-              tags.social_facility ||
-              "food"
-          };
-        })
-        .filter(Boolean);
-
-      const uniquePlaces = Array.from(
-        new Map(
-          places.map((place) => [
-            `${place.lat.toFixed(5)}-${place.lng.toFixed(5)}`,
-            place
-          ])
-        ).values()
-      );
-
-      const withDistance = uniquePlaces.map(
-        (place) => ({
-          ...place,
-          roughDistance:
-            calculateDistance(
-              lat,
-              lng,
-              place.lat,
-              place.lng
-            )
-        })
-      );
+      const withDistance = places.map((place) => ({
+        ...place,
+        roughDistance: calculateDistance(
+          lat,
+          lng,
+          place.lat,
+          place.lng
+        )
+      }));
 
       withDistance.sort(
-        (a, b) =>
-          a.roughDistance -
-          b.roughDistance
+        (a, b) => a.roughDistance - b.roughDistance
       );
 
       return withDistance.slice(0, 5);

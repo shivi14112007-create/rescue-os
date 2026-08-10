@@ -462,6 +462,34 @@ def match_batch(batch_id: int, limit: int = 3):
     }
 
 
+@app.get("/partners/nearby")
+def partners_nearby(lat: float, lng: float, limit: int = 8):
+    """
+    Live rescue-partner lookup for an arbitrary point (used by the
+    "Find nearby rescue options" map button, which has no batch_id).
+
+    Reuses the same robust find_live_partners() flow as /automation/{id}/match
+    (multiple Overpass mirrors, widening search rings, in-memory caching,
+    fail-soft on network errors) instead of the frontend calling
+    overpass-api.de directly from the user's own browser. Calling a single
+    public Overpass mirror straight from the browser is what was breaking
+    on the deployed site: overpass-api.de rate-limits/blocks unpredictably
+    depending on the caller's network path, and there was no fallback
+    mirror or retry - so it "worked locally" whenever that one mirror
+    happened to be reachable, and failed elsewhere.
+    """
+    buyers = find_live_partners(lat, lng, "buyer", limit=limit)
+    ngos = find_live_partners(lat, lng, "ngo", limit=limit)
+
+    combined = (buyers + ngos)
+    combined.sort(key=lambda x: x.get("distance_km", 9999))
+
+    return {
+        "matches": combined[:limit],
+        "source": "openstreetmap" if combined else None,
+    }
+
+
 @app.post("/batches/{batch_id}/claim", response_model=BatchResponse)
 def claim_batch(batch_id: int, claim: ClaimRequest):
     """Buyer or NGO claims a batch that was marked for markdown/donation/fast-track."""
