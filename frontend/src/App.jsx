@@ -11,34 +11,68 @@ import MyBatches from "./components/MyBatches";
 import Marketplace from "./components/Marketplace";
 import BatchDetail from "./components/BatchDetail";
 import LocationMap from "./components/LocationMap";
+import RescueCertificate from "./components/RescueCertificate";
 
 import LanguageToggle from "./components/LanguageToggle";
 import { useLanguage } from "./i18n/LanguageContext";
 
-import { Bell, MapPin, Loader2 } from "lucide-react";
+import {
+  Bell,
+  MapPin,
+  Loader2,
+} from "lucide-react";
 
 import LandingPage from "./components/LandingPage";
+import LoginPage from "./components/LoginPage";
 
 const SELLER_NAME = "Ramesh Yadav";
 
 export default function App() {
   const { t } = useLanguage();
 
-  const [showLanding, setShowLanding] = useState(true);
-  const [page, setPage] = useState("dashboard");
+  // =========================
+  // APP STATES
+  // =========================
 
-  const [batches, setBatches] = useState([]);
-  const [impact, setImpact] = useState(null);
-  const [selectedBatch, setSelectedBatch] = useState(null);
+  const [showLanding, setShowLanding] =
+    useState(true);
 
-  const [connectionError, setConnectionError] = useState(false);
+  const [showLogin, setShowLogin] =
+    useState(false);
+
+  const [user, setUser] = useState(null);
+
+  const [page, setPage] =
+    useState("dashboard");
+
+  const [batches, setBatches] =
+    useState([]);
+
+  const [impact, setImpact] =
+    useState(null);
+
+  const [selectedBatch, setSelectedBatch] =
+    useState(null);
+
+  const [certificateBatch, setCertificateBatch] =
+    useState(null);
+
+  const [connectionError, setConnectionError] =
+    useState(false);
 
   const [currentLocation, setCurrentLocation] =
     useState("Detecting location...");
 
+  // =========================
+  // BACKEND DATA
+  // =========================
+
   async function refresh() {
     try {
-      const [batchList, impactData] = await Promise.all([
+      const [
+        batchList,
+        impactData,
+      ] = await Promise.all([
         listBatches(),
         getImpact(),
       ]);
@@ -61,13 +95,18 @@ export default function App() {
 
   useEffect(() => {
     if (!navigator.geolocation) {
-      setCurrentLocation("Location unavailable");
+      setCurrentLocation(
+        "Location unavailable"
+      );
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        const { latitude, longitude } = position.coords;
+        const {
+          latitude,
+          longitude,
+        } = position.coords;
 
         try {
           const response = await fetch(
@@ -75,11 +114,16 @@ export default function App() {
           );
 
           if (!response.ok) {
-            throw new Error("Location lookup failed");
+            throw new Error(
+              "Location lookup failed"
+            );
           }
 
-          const data = await response.json();
-          const address = data.address || {};
+          const data =
+            await response.json();
+
+          const address =
+            data.address || {};
 
           const location =
             address.city ||
@@ -89,19 +133,26 @@ export default function App() {
             address.county ||
             "Current Location";
 
-          const state = address.state || "";
+          const state =
+            address.state || "";
 
           setCurrentLocation(
-            state ? `${location}, ${state}` : location
+            state
+              ? `${location}, ${state}`
+              : location
           );
         } catch {
           setCurrentLocation(
-            `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+            `${latitude.toFixed(
+              4
+            )}, ${longitude.toFixed(4)}`
           );
         }
       },
       () => {
-        setCurrentLocation("Location permission denied");
+        setCurrentLocation(
+          "Location permission denied"
+        );
       },
       {
         enableHighAccuracy: true,
@@ -111,13 +162,36 @@ export default function App() {
     );
   }, []);
 
+  // =========================
+  // GET STARTED
+  // =========================
+
   function handleGetStarted() {
+    setShowLanding(false);
+    setShowLogin(true);
+  }
+
+  // =========================
+  // LOGIN SUCCESS
+  // =========================
+
+  function handleLogin(loggedInUser) {
+    setUser(loggedInUser);
+
+    setShowLogin(false);
     setShowLanding(false);
     setPage("dashboard");
   }
 
+  // =========================
+  // BATCH CREATED
+  // =========================
+
   function handleBatchCreated(newBatch) {
-    setBatches((prev) => [newBatch, ...prev]);
+    setBatches((prev) => [
+      newBatch,
+      ...prev,
+    ]);
 
     getImpact()
       .then(setImpact)
@@ -126,16 +200,27 @@ export default function App() {
     setPage("dashboard");
   }
 
+  // =========================
+  // CLAIM / RESCUE
+  // =========================
+
   function handleClaim(updatedBatch) {
     setBatches((prev) =>
       prev.map((b) =>
-        b.id === updatedBatch.id ? updatedBatch : b
+        b.id === updatedBatch.id
+          ? updatedBatch
+          : b
       )
     );
 
     getImpact()
       .then(setImpact)
       .catch(() => {});
+
+    // Show rescue certificate
+    setCertificateBatch(
+      updatedBatch
+    );
   }
 
   // =========================
@@ -145,56 +230,102 @@ export default function App() {
   if (showLanding) {
     return (
       <LandingPage
-        onGetStarted={handleGetStarted}
+        onGetStarted={
+          handleGetStarted
+        }
       />
     );
   }
 
   // =========================
-  // DASHBOARD
+  // LOGIN PAGE
+  // =========================
+
+  if (showLogin) {
+    return (
+      <LoginPage
+        onBack={() => {
+          setShowLogin(false);
+          setShowLanding(true);
+        }}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  // =========================
+  // MAIN DASHBOARD
   // =========================
 
   return (
     <div className="min-h-screen flex bg-canvas text-ink">
 
-      {/* SIDEBAR */}
+      {/* =========================
+          SIDEBAR
+      ========================= */}
 
       <Sidebar
         active={page}
         onNavigate={setPage}
-        sellerName={SELLER_NAME}
+        sellerName={
+          user?.displayName ||
+          SELLER_NAME
+        }
       />
 
-      {/* MAIN */}
+      {/* =========================
+          MAIN
+      ========================= */}
 
       <main className="flex-1 min-w-0">
 
-        {/* HEADER */}
+        {/* =========================
+            HEADER
+        ========================= */}
 
         <header className="bg-panel border-b border-border px-8 py-4 flex items-center justify-between">
+
+          {/* HEADER LEFT */}
 
           <div>
             <h1 className="text-lg font-bold text-ink">
 
               {page === "dashboard" &&
-                t("header.greeting", {
-                  name: SELLER_NAME.split(" ")[0],
-                })}
+                t(
+                  "header.greeting",
+                  {
+                    name:
+                      user?.displayName?.split(
+                        " "
+                      )[0] ||
+                      SELLER_NAME.split(
+                        " "
+                      )[0],
+                  }
+                )}
 
               {page === "add" &&
-                t("header.addTitle")}
+                t(
+                  "header.addTitle"
+                )}
 
               {page === "batches" &&
-                t("header.batchesTitle")}
+                t(
+                  "header.batchesTitle"
+                )}
 
               {page === "marketplace" &&
-                t("header.marketplaceTitle")}
+                t(
+                  "header.marketplaceTitle"
+                )}
 
             </h1>
 
             {page === "dashboard" && (
               <p className="text-muted text-sm">
-                {t("header.dashboardSubtitle")}
+                {t(
+                  "header.dashboardSubtitle"
+                )}
               </p>
             )}
           </div>
@@ -207,7 +338,8 @@ export default function App() {
 
             <div className="hidden sm:flex items-center gap-1.5 text-sm text-muted border border-border rounded-full px-3 py-1.5">
 
-              {currentLocation === "Detecting location..." ? (
+              {currentLocation ===
+              "Detecting location..." ? (
                 <Loader2
                   size={14}
                   className="animate-spin"
@@ -216,7 +348,9 @@ export default function App() {
                 <MapPin size={14} />
               )}
 
-              <span>{currentLocation}</span>
+              <span>
+                {currentLocation}
+              </span>
 
             </div>
 
@@ -236,7 +370,9 @@ export default function App() {
           </div>
         </header>
 
-        {/* CONTENT */}
+        {/* =========================
+            CONTENT
+        ========================= */}
 
         <div className="p-8">
 
@@ -245,16 +381,21 @@ export default function App() {
           {connectionError && (
             <div className="bg-donate-light border border-donate/30 text-donate rounded-lg px-4 py-3 mb-6 text-sm">
 
-              {t("connection.error", {
-                url: "127.0.0.1:8000",
-                command:
-                  "uvicorn app.main:app --reload",
-              })}
+              {t(
+                "connection.error",
+                {
+                  url: "127.0.0.1:8000",
+                  command:
+                    "uvicorn app.main:app --reload",
+                }
+              )}
 
             </div>
           )}
 
-          {/* DASHBOARD */}
+          {/* =========================
+              DASHBOARD
+          ========================= */}
 
           {page === "dashboard" && (
             <>
@@ -271,7 +412,9 @@ export default function App() {
 
                 <RecentBatchesTable
                   batches={batches}
-                  onSelect={setSelectedBatch}
+                  onSelect={
+                    setSelectedBatch
+                  }
                 />
 
                 <ImpactSnapshot
@@ -284,42 +427,78 @@ export default function App() {
             </>
           )}
 
-          {/* ADD BATCH */}
+          {/* =========================
+              ADD BATCH
+          ========================= */}
 
           {page === "add" && (
             <AddBatchForm
-              sellerName={SELLER_NAME}
-              onBatchCreated={handleBatchCreated}
+              sellerName={
+                user?.displayName ||
+                SELLER_NAME
+              }
+              onBatchCreated={
+                handleBatchCreated
+              }
             />
           )}
 
-          {/* MY BATCHES */}
+          {/* =========================
+              MY BATCHES
+          ========================= */}
 
           {page === "batches" && (
             <MyBatches
               batches={batches}
-              onSelect={setSelectedBatch}
+              onSelect={
+                setSelectedBatch
+              }
             />
           )}
 
-          {/* MARKETPLACE */}
+          {/* =========================
+              MARKETPLACE
+          ========================= */}
 
           {page === "marketplace" && (
             <Marketplace
               batches={batches}
-              onClaim={handleClaim}
-              onSelect={setSelectedBatch}
+              onClaim={
+                handleClaim
+              }
+              onSelect={
+                setSelectedBatch
+              }
             />
           )}
 
         </div>
       </main>
 
-      {/* BATCH DETAIL */}
+      {/* =========================
+          BATCH DETAIL
+      ========================= */}
 
       <BatchDetail
         batch={selectedBatch}
-        onClose={() => setSelectedBatch(null)}
+        onClose={() =>
+          setSelectedBatch(null)
+        }
+      />
+
+      {/* =========================
+          RESCUE CERTIFICATE
+      ========================= */}
+
+      <RescueCertificate
+        batch={certificateBatch}
+        sellerName={
+          user?.displayName ||
+          SELLER_NAME
+        }
+        onClose={() =>
+          setCertificateBatch(null)
+        }
       />
 
     </div>
