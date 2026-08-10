@@ -30,6 +30,12 @@ class BatchCreate(BaseModel):
         description="ISO 639-1 code the seller's UI is in - used to ask the AI agent "
                     "to write its reasoning in that language (falls back to English).",
     )
+    # Optional - filled in automatically when the seller uploads/captures a photo
+    # and it's run through POST /vision/analyze-image on the frontend first.
+    # Left blank, everything behaves exactly as before (manual entry only).
+    quality_label: Optional[str] = Field(None, examples=["good"])
+    quality_score: Optional[int] = Field(None, ge=0, le=100, examples=[78])
+    vision_source: Optional[str] = Field(None, examples=["gemini:gemini-2.0-flash"])
 
 
 class BatchPreviewRequest(BatchCreate):
@@ -45,6 +51,20 @@ class BatchPreviewResponse(BaseModel):
     agent_reasoning: str
     agent_source: str
     discounted_price_per_kg: Optional[float] = None
+
+
+class VisionAnalysisResponse(BaseModel):
+    """Returned by POST /vision/analyze-image - one photo in, produce type + quality out."""
+    produce_type: str = Field(..., examples=["tomato"])
+    produce_confidence: float = Field(..., ge=0, le=1, examples=[0.92])
+    quality_label: str = Field(..., examples=["good"], description="excellent | good | fair | poor | spoiled")
+    quality_score: int = Field(..., ge=0, le=100, examples=[78])
+    defects_observed: list[str] = Field(default_factory=list)
+    reasoning: str = ""
+    source: str = Field(..., description="which provider answered: gemini:<model> / groq:<model> / classical_cv")
+    shelf_life_adjustment_pct: float = Field(
+        0.0, description="Suggested nudge to the harvest-date shelf-life estimate based on visible quality."
+    )
 
 
 class ClaimRequest(BaseModel):
@@ -75,6 +95,9 @@ class BatchResponse(BaseModel):
     claimed_contact: Optional[str] = None
     claimed_at: Optional[str]
     completed_at: Optional[str] = None
+    quality_label: Optional[str] = None
+    quality_score: Optional[int] = None
+    vision_source: Optional[str] = None
 
 
 class ImpactResponse(BaseModel):

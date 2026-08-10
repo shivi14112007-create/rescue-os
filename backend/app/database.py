@@ -93,6 +93,11 @@ def _run_migrations(conn):
         "claimed_contact": "TEXT",
         "claimed_at": "TEXT",
         "completed_at": "TEXT",
+        # Produce Vision - filled in when the seller's photo was analyzed
+        # via POST /vision/analyze-image before batch creation.
+        "quality_label": "TEXT",
+        "quality_score": "INTEGER",
+        "vision_source": "TEXT",
     }
 
     existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(batches)").fetchall()}
