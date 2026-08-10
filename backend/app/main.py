@@ -8,6 +8,7 @@ Endpoints:
   POST /batches/{id}/claim  - buyer/NGO claims a discounted/donated batch
   POST /batches/{id}/complete - seller confirms a claimed batch was actually picked up
   GET  /impact              - aggregate impact metrics (kg saved, batches rescued, revenue recovered)
+  POST /vision/analyze-image - identify produce type + grade visible quality from one photo
 
 Run locally:
   pip install -r requirements.txt
@@ -21,17 +22,20 @@ load_dotenv()  # must run before app.agent is imported, since it reads keys at i
 
 from datetime import date, datetime
 from math import radians, sin, cos, sqrt, atan2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db, get_conn, row_to_dict
 from app.models import (
     BatchCreate, ClaimRequest, BatchResponse, BatchPreviewRequest,
-    BatchPreviewResponse, ImpactResponse,
+    BatchPreviewResponse, ImpactResponse, VisionAnalysisResponse,
 )
 from app.shelf_life import estimate_remaining_shelf_life, classify_status
 from app.agent import get_agent_recommendation
 from app.partners_live import find_live_partners
+from app.vision import analyze_produce_image, QUALITY_SHELF_LIFE_ADJUSTMENT
+
+MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB - generous for a phone camera photo
 
 app = FastAPI(title="Rescue OS", description="Dynamic Rescue Marketplace for Fresh Produce")
 
@@ -97,14 +101,58 @@ def preview_batch(batch: BatchPreviewRequest):
     }
 
 
+@app.post("/vision/analyze-image", response_model=VisionAnalysisResponse)
+async def analyze_image(file: UploadFile = File(...)):
+    """
+    Upload one photo of a batch of produce. Returns the detected produce type
+    plus a visible-quality grade (excellent/good/fair/poor/spoiled) with a
+    0-100 score, so the frontend can auto-fill the produce-type field and show
+    a quality badge before the seller ever types anything.
+
+    This does NOT create a batch by itself - the frontend calls this first
+    (right after the photo is captured/selected), then passes the results
+    along as part of the normal POST /batches payload.
+    """
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image is too large (max 8 MB).")
+
+    try:
+        result = analyze_produce_image(image_bytes, mime_type=file.content_type)
+    except Exception as exc:  # pragma: no cover - belt-and-braces; vision.py already
+        # has its own 3-step fallback chain ending in a dependency-free classical
+        # CV pass, so this should be unreachable in practice.
+        raise HTTPException(status_code=502, detail=f"Image analysis failed: {exc}")
+
+    return result
+
+
 @app.post("/batches", response_model=BatchResponse)
 def create_batch(batch: BatchCreate):
-    """Seller logs a new batch. We immediately compute shelf life + agent recommendation."""
+    """
+    Seller logs a new batch. We immediately compute shelf life + agent recommendation.
+
+    If the seller photographed the produce first (POST /vision/analyze-image),
+    batch.quality_label/quality_score/vision_source will be set - in that case
+    the harvest-date shelf-life estimate is nudged by how the produce actually
+    looks today (see QUALITY_SHELF_LIFE_ADJUSTMENT in app/vision.py), instead of
+    trusting harvest date alone. Left blank, behavior is unchanged from before.
+    """
     remaining_days = estimate_remaining_shelf_life(
         produce_type=batch.produce_type,
         harvest_date=batch.harvest_date,
         storage_condition=batch.storage_condition,
     )
+
+    if batch.quality_label:
+        adjustment_pct = QUALITY_SHELF_LIFE_ADJUSTMENT.get(batch.quality_label, 0.0)
+        remaining_days = round(remaining_days * (1 + adjustment_pct), 1)
+
     status = classify_status(remaining_days)
 
     recommendation = get_agent_recommendation(
@@ -123,8 +171,9 @@ def create_batch(batch: BatchCreate):
                 produce_type, quantity_kg, harvest_date, storage_condition,
                 location, latitude, longitude, seller_name, price_per_kg, notes,
                 remaining_shelf_life_days, status,
-                recommended_action, discount_pct, agent_reasoning, agent_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                recommended_action, discount_pct, agent_reasoning, agent_source,
+                quality_label, quality_score, vision_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch.produce_type, batch.quantity_kg, batch.harvest_date.isoformat(),
@@ -133,6 +182,7 @@ def create_batch(batch: BatchCreate):
                 remaining_days, status,
                 recommendation["action"], recommendation.get("discount_pct", 0),
                 recommendation["reasoning"], recommendation.get("source", "unknown"),
+                batch.quality_label, batch.quality_score, batch.vision_source,
             ),
         )
         conn.commit()
