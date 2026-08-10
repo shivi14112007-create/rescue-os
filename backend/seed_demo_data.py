@@ -4,10 +4,22 @@ Backend must already be running: uvicorn app.main:app --reload  (http://127.0.0.
 
 Run: python seed_demo_data.py
 """
+import os
+import sys
 import requests
 from datetime import date, timedelta
 
-BASE_URL = "http://127.0.0.1:8000"
+# Priority: command-line arg > BACKEND_URL env var > local dev default.
+# To seed a deployed backend:
+#   python seed_demo_data.py https://your-backend.onrender.com
+# or:
+#   BACKEND_URL=https://your-backend.onrender.com python seed_demo_data.py
+BASE_URL = (
+    sys.argv[1] if len(sys.argv) > 1
+    else os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+).rstrip("/")
+
+print(f"Seeding against: {BASE_URL}\n")
 
 def d(days_ago):
     return (date.today() - timedelta(days=days_ago)).isoformat()
