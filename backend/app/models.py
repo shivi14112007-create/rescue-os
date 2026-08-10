@@ -83,7 +83,9 @@ class ImpactResponse(BaseModel):
     batches_rescued: int
     batches_in_progress: int
     batches_expired: int
+    batches_composted: int = 0
     kg_rescued: float
     kg_in_progress: float
     kg_currently_at_risk: float
+    kg_composted: float = 0
     revenue_recovered: float

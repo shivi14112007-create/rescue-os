@@ -22,7 +22,7 @@ from groq import Groq, GroqError
 from google import genai
 from google.genai.errors import APIError as GeminiAPIError
 
-from app.shelf_life import calculate_dynamic_discount
+from app.shelf_life import calculate_dynamic_discount, COMPOST_THRESHOLD_DAYS
 
 # ---- Client setup (only initialized if the relevant key is present) ----
 
@@ -59,7 +59,7 @@ remaining shelf life, quantity, and location, decide the single best action.
 
 Respond with ONLY a JSON object (no markdown, no preamble) in this exact shape:
 {{
-  "action": "hold" | "markdown" | "donate" | "fast_track",
+  "action": "hold" | "markdown" | "donate" | "fast_track" | "compost",
   "discount_pct": <integer 0-90, 0 if action is not markdown>,
   "reasoning": "<one or two plain-language sentences a non-technical mandi trader can understand>"
 }}
@@ -68,7 +68,9 @@ Guidelines:
 - remaining_days > 3 -> usually "hold"
 - remaining_days between 1 and 3 -> usually "markdown" (higher discount as days decrease)
 - remaining_days <= 1 and quantity is large -> "fast_track" (needs to move NOW, possibly bulk deal)
-- remaining_days <= 0 or produce is clearly unsellable -> "donate"
+- remaining_days <= 0 (just past shelf life) or produce is clearly unsellable -> "donate"
+- remaining_days significantly negative (rotten, spoiled well past shelf life, not fit even
+  for donation) -> "compost" so it's kept out of landfill instead of wasted entirely
 - Keep reasoning short, practical, and specific to the numbers given.
 - IMPORTANT: Write the "reasoning" value in {language_name}, using the Devanagari/native \
 script for that language where applicable (not transliterated English). Keep "action" and \
@@ -84,54 +86,63 @@ FALLBACK_STRINGS = {
         "urgent": "Less than a day of shelf life remains, so this batch needs to move immediately.",
         "markdown": "Shelf life is getting short ({days} days left), so a {discount}% discount will help move stock before it spoils.",
         "hold": "Plenty of shelf life remains, so this batch can be held at normal price for now.",
+        "compost": "This batch is well past its shelf life and no longer fit for donation, so it should be composted instead of thrown away.",
     },
     "hi": {
         "donate": "शेल्फ लाइफ समाप्त हो चुकी है, इसलिए नुकसान से बचने के लिए इस बैच को तुरंत दान में भेजा जाना चाहिए।",
         "urgent": "एक दिन से भी कम शेल्फ लाइफ बची है, इसलिए इस बैच को तुरंत बेचना जरूरी है।",
         "markdown": "शेल्फ लाइफ कम हो रही है ({days} दिन बचे हैं), इसलिए {discount}% छूट से माल जल्दी बिकने में मदद मिलेगी।",
         "hold": "अभी काफी शेल्फ लाइफ बची है, इसलिए इस बैच को सामान्य कीमत पर रोका जा सकता है।",
+        "compost": "यह बैच शेल्फ लाइफ से काफी आगे निकल चुका है और अब दान के लायक भी नहीं है, इसलिए इसे फेंकने के बजाय खाद बनाने के लिए भेजा जाना चाहिए।",
     },
     "bn": {
         "donate": "মেয়াদ শেষ হয়ে গেছে, তাই সম্পূর্ণ ক্ষতি এড়াতে এই ব্যাচটি অবিলম্বে দান করা উচিত।",
         "urgent": "এক দিনেরও কম মেয়াদ বাকি আছে, তাই এই ব্যাচটি এখনই বিক্রি করা দরকার।",
         "markdown": "মেয়াদ কমে আসছে ({days} দিন বাকি), তাই {discount}% ছাড় দিলে মাল দ্রুত বিক্রি হতে সাহায্য করবে।",
         "hold": "এখনও যথেষ্ট মেয়াদ আছে, তাই এই ব্যাচটি স্বাভাবিক দামে রাখা যেতে পারে।",
+        "compost": "এই ব্যাচটি মেয়াদের অনেক পরে চলে গেছে এবং আর দানের যোগ্য নয়, তাই ফেলে না দিয়ে এটি কম্পোস্ট করা উচিত।",
     },
     "ta": {
         "donate": "ஆயுட்காலம் முடிந்துவிட்டது, எனவே முழு இழப்பைத் தவிர்க்க இந்த தொகுதி உடனடியாக நன்கொடையாக அனுப்பப்பட வேண்டும்.",
         "urgent": "ஒரு நாளுக்கும் குறைவான ஆயுட்காலம் மட்டுமே உள்ளது, எனவே இந்த தொகுதி உடனடியாக விற்கப்பட வேண்டும்.",
         "markdown": "ஆயுட்காலம் குறைந்து வருகிறது ({days} நாட்கள் மீதம்), எனவே {discount}% தள்ளுபடி பொருளை விற்பனை செய்ய உதவும்.",
         "hold": "இன்னும் போதுமான ஆயுட்காலம் உள்ளது, எனவே இந்த தொகுதியை சாதாரண விலையில் வைத்திருக்கலாம்.",
+        "compost": "இந்த தொகுதி ஆயுட்காலத்தை தாண்டிவிட்டது, நன்கொடைக்கும் தகுதியற்றது, எனவே இதை வீணாக்காமல் உரமாக்க வேண்டும்.",
     },
     "te": {
         "donate": "షెల్ఫ్ లైఫ్ ముగిసిపోయింది, కాబట్టి పూర్తి నష్టాన్ని నివారించడానికి ఈ బ్యాచ్‌ని వెంటనే దానం చేయాలి.",
         "urgent": "ఒక రోజు కంటే తక్కువ షెల్ఫ్ లైఫ్ మిగిలి ఉంది, కాబట్టి ఈ బ్యాచ్‌ని వెంటనే అమ్మాలి.",
         "markdown": "షెల్ఫ్ లైఫ్ తగ్గుతోంది ({days} రోజులు మిగిలి ఉన్నాయి), కాబట్టి {discount}% డిస్కౌంట్ సరుకును త్వరగా అమ్మడానికి సహాయపడుతుంది.",
         "hold": "ఇంకా తగినంత షెల్ఫ్ లైఫ్ ఉంది, కాబట్టి ఈ బ్యాచ్‌ని సాధారణ ధరకే ఉంచవచ్చు.",
+        "compost": "ఈ బ్యాచ్ షెల్ఫ్ లైఫ్‌ను చాలా దాటిపోయింది మరియు దానం చేయడానికి కూడా పనికిరాదు, కాబట్టి పారేయకుండా కంపోస్ట్ చేయాలి.",
     },
     "mr": {
         "donate": "शेल्फ लाइफ संपली आहे, त्यामुळे संपूर्ण नुकसान टाळण्यासाठी हा बॅच त्वरित दान करावा.",
         "urgent": "एका दिवसापेक्षा कमी शेल्फ लाइफ शिल्लक आहे, त्यामुळे हा बॅच त्वरित विकणे आवश्यक आहे.",
         "markdown": "शेल्फ लाइफ कमी होत आहे ({days} दिवस शिल्लक), त्यामुळे {discount}% सवलतीमुळे माल लवकर विकण्यास मदत होईल.",
         "hold": "अजून पुरेशी शेल्फ लाइफ शिल्लक आहे, त्यामुळे हा बॅच सध्या सामान्य किमतीत ठेवता येईल.",
+        "compost": "हा बॅच शेल्फ लाइफच्या खूप पुढे गेला आहे आणि आता दानासाठीही योग्य नाही, त्यामुळे तो फेकण्याऐवजी कंपोस्ट करावा.",
     },
     "gu": {
         "donate": "શેલ્ફ લાઇફ પૂરી થઈ ગઈ છે, તેથી સંપૂર્ણ નુકસાન ટાળવા આ બેચ તાત્કાલિક દાનમાં આપવો જોઈએ.",
         "urgent": "એક દિવસ કરતાં ઓછી શેલ્ફ લાઇફ બાકી છે, તેથી આ બેચ તાત્કાલિક વેચવો જરૂરી છે.",
         "markdown": "શેલ્ફ લાઇફ ઘટી રહી છે ({days} દિવસ બાકી), તેથી {discount}% ડિસ્કાઉન્ટ માલ ઝડપથી વેચવામાં મદદ કરશે.",
         "hold": "હજુ પૂરતી શેલ્ફ લાઇફ બાકી છે, તેથી આ બેચ સામાન્ય ભાવે રાખી શકાય છે.",
+        "compost": "આ બેચ શેલ્ફ લાઇફ કરતાં ઘણો આગળ નીકળી ગયો છે અને હવે દાન માટે પણ યોગ્ય નથી, તેથી તેને ફેંકવાને બદલે ખાતર બનાવવું જોઈએ.",
     },
     "kn": {
         "donate": "ಶೆಲ್ಫ್ ಲೈಫ್ ಮುಗಿದಿದೆ, ಆದ್ದರಿಂದ ಸಂಪೂರ್ಣ ನಷ್ಟ ತಪ್ಪಿಸಲು ಈ ಬ್ಯಾಚ್ ಅನ್ನು ತಕ್ಷಣ ದಾನ ಮಾಡಬೇಕು.",
         "urgent": "ಒಂದು ದಿನಕ್ಕಿಂತ ಕಡಿಮೆ ಶೆಲ್ಫ್ ಲೈಫ್ ಉಳಿದಿದೆ, ಆದ್ದರಿಂದ ಈ ಬ್ಯಾಚ್ ಅನ್ನು ತಕ್ಷಣ ಮಾರಾಟ ಮಾಡಬೇಕು.",
         "markdown": "ಶೆಲ್ಫ್ ಲೈಫ್ ಕಡಿಮೆಯಾಗುತ್ತಿದೆ ({days} ದಿನಗಳು ಉಳಿದಿವೆ), ಆದ್ದರಿಂದ {discount}% ರಿಯಾಯಿತಿ ಸರಕನ್ನು ಬೇಗ ಮಾರಾಟ ಮಾಡಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ.",
         "hold": "ಇನ್ನೂ ಸಾಕಷ್ಟು ಶೆಲ್ಫ್ ಲೈಫ್ ಉಳಿದಿದೆ, ಆದ್ದರಿಂದ ಈ ಬ್ಯಾಚ್ ಅನ್ನು ಸಾಮಾನ್ಯ ಬೆಲೆಯಲ್ಲಿ ಇರಿಸಬಹುದು.",
+        "compost": "ಈ ಬ್ಯಾಚ್ ಶೆಲ್ಫ್ ಲೈಫ್ ಅನ್ನು ಬಹಳ ಮೀರಿದೆ ಮತ್ತು ಈಗ ದಾನಕ್ಕೂ ಯೋಗ್ಯವಿಲ್ಲ, ಆದ್ದರಿಂದ ಎಸೆಯುವ ಬದಲು ಕಾಂಪೋಸ್ಟ್ ಮಾಡಬೇಕು.",
     },
     "pa": {
         "donate": "ਸ਼ੈਲਫ ਲਾਈਫ ਖਤਮ ਹੋ ਗਈ ਹੈ, ਇਸ ਲਈ ਪੂਰੇ ਨੁਕਸਾਨ ਤੋਂ ਬਚਣ ਲਈ ਇਸ ਬੈਚ ਨੂੰ ਤੁਰੰਤ ਦਾਨ ਕਰ ਦੇਣਾ ਚਾਹੀਦਾ ਹੈ।",
         "urgent": "ਇੱਕ ਦਿਨ ਤੋਂ ਵੀ ਘੱਟ ਸ਼ੈਲਫ ਲਾਈਫ ਬਾਕੀ ਹੈ, ਇਸ ਲਈ ਇਸ ਬੈਚ ਨੂੰ ਤੁਰੰਤ ਵੇਚਣਾ ਜ਼ਰੂਰੀ ਹੈ।",
         "markdown": "ਸ਼ੈਲਫ ਲਾਈਫ ਘੱਟ ਹੋ ਰਹੀ ਹੈ ({days} ਦਿਨ ਬਾਕੀ), ਇਸ ਲਈ {discount}% ਛੋਟ ਮਾਲ ਨੂੰ ਜਲਦੀ ਵੇਚਣ ਵਿੱਚ ਮਦਦ ਕਰੇਗੀ।",
         "hold": "ਹਾਲੇ ਵੀ ਕਾਫ਼ੀ ਸ਼ੈਲਫ ਲਾਈਫ ਬਾਕੀ ਹੈ, ਇਸ ਲਈ ਇਸ ਬੈਚ ਨੂੰ ਆਮ ਕੀਮਤ 'ਤੇ ਰੋਕਿਆ ਜਾ ਸਕਦਾ ਹੈ।",
+        "compost": "ਇਹ ਬੈਚ ਸ਼ੈਲਫ ਲਾਈਫ ਤੋਂ ਬਹੁਤ ਅੱਗੇ ਲੰਘ ਚੁੱਕਾ ਹੈ ਅਤੇ ਹੁਣ ਦਾਨ ਦੇ ਯੋਗ ਵੀ ਨਹੀਂ, ਇਸ ਲਈ ਇਸਨੂੰ ਸੁੱਟਣ ਦੀ ਬਜਾਏ ਖਾਦ ਬਣਾਉਣਾ ਚਾਹੀਦਾ ਹੈ।",
     },
 }
 
@@ -152,7 +163,14 @@ def _rule_based_fallback(
     """
     strings = FALLBACK_STRINGS.get(language, FALLBACK_STRINGS["en"])
 
-    if remaining_days <= 0:
+    if remaining_days <= COMPOST_THRESHOLD_DAYS:
+        return {
+            "action": "compost",
+            "discount_pct": 0,
+            "reasoning": strings["compost"],
+            "source": "rule_based",
+        }
+    elif remaining_days <= 0:
         return {
             "action": "donate",
             "discount_pct": 100,
@@ -189,7 +207,7 @@ def _parse_json_response(text: str) -> dict:
     """Shared cleanup + validation for any LLM's raw text output."""
     text = text.strip().replace("```json", "").replace("```", "").strip()
     parsed = json.loads(text)
-    if parsed.get("action") not in {"hold", "markdown", "donate", "fast_track"}:
+    if parsed.get("action") not in {"hold", "markdown", "donate", "fast_track", "compost"}:
         raise ValueError("invalid action from LLM")
     return parsed
 

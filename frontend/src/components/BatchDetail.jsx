@@ -9,6 +9,7 @@ const TILE_BG = {
   markdown: "bg-markdown-light",
   fast_track: "bg-fasttrack-light",
   donate: "bg-donate-light",
+  compost: "bg-compost-light",
 };
 
 export default function BatchDetail({ batch, onClose, onComplete }) {

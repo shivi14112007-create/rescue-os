@@ -11,16 +11,20 @@ export default function ImpactSnapshot({ batches }) {
   const donated = claimed
     .filter((b) => b.recommended_action === "donate")
     .reduce((s, b) => s + b.quantity_kg, 0);
+  const composted = claimed
+    .filter((b) => b.recommended_action === "compost")
+    .reduce((s, b) => s + b.quantity_kg, 0);
 
-  const total = soldViaMarkdown + fastTrackSales + donated;
+  const total = soldViaMarkdown + fastTrackSales + donated + composted;
 
   const data = [
     { name: "Sold via Markdown", value: soldViaMarkdown, color: "#F5A623" },
     { name: "Fast-Track Sales", value: fastTrackSales, color: "#E8622C" },
     { name: "Donated", value: donated, color: "#D64545" },
+    { name: "Composted", value: composted, color: "#6B4423" },
   ].filter((d) => d.value > 0);
 
-  const mealsNotWasted = Math.round(total * 2.5); // rough estimate: 1kg ≈ 2.5 meals
+  const mealsNotWasted = Math.round((soldViaMarkdown + fastTrackSales + donated) * 2.5); // rough estimate: 1kg ≈ 2.5 meals (composted kg isn't edible, so excluded here)
 
   return (
     <div className="bg-panel border border-border rounded-xl p-5 shadow-card flex flex-col">

@@ -31,6 +31,7 @@ from app.models import (
 )
 from app.shelf_life import estimate_remaining_shelf_life, classify_status
 from app.agent import get_agent_recommendation
+from app.partners_live import find_live_partners
 
 app = FastAPI(title="Rescue OS", description="Dynamic Rescue Marketplace for Fresh Produce")
 
@@ -311,7 +312,8 @@ def escalate_batch(batch_id: int):
             "hold": "markdown",
             "markdown": "fast_track",
             "fast_track": "donate",
-            "donate": "donate",
+            "donate": "compost",
+            "compost": "compost",
         }
 
         next_action = escalation_map.get(
@@ -349,13 +351,22 @@ def escalate_batch(batch_id: int):
 @app.get("/automation/{batch_id}/match")
 def match_batch(batch_id: int, limit: int = 3):
     """
-    Rescue Match — proactively suggest the nearest registered NGOs/buyers
-    for this batch instead of waiting for someone to browse the marketplace.
+    Rescue Match — proactively suggest the nearest real NGOs/buyers for
+    this batch instead of waiting for someone to browse the marketplace.
 
     Partner type is picked based on the batch's recommended_action:
       donate                -> NGOs only
       markdown / fast_track  -> buyers only (NGOs shown too if none found)
       hold                   -> no match needed yet
+
+    Data flow: this is a LIVE lookup against OpenStreetMap (via
+    find_live_partners), centered on the batch's own lat/lng - not a fixed
+    list. So a batch logged in Mumbai gets real Mumbai-area NGOs, a batch
+    in Chennai gets real Chennai-area NGOs, etc. Only if the live lookup
+    times out / the network is unavailable / OSM has nothing nearby do we
+    fall back to the small seeded `partners` table as a safety net (each
+    match is tagged with "source" = "openstreetmap" or "seed_data" so the
+    frontend/demo can be transparent about which one is showing).
 
     Ranked by distance (haversine) from the batch's own coordinates.
     Returns whatever contact fields each partner actually has (contact,
@@ -381,40 +392,57 @@ def match_batch(batch_id: int, limit: int = 3):
                 "matches": [],
                 "message": "Batch is currently on hold, no rescue match needed yet.",
             }
+        if action == "compost":
+            return {
+                "batch_id": batch_id,
+                "matches": [],
+                "message": "Batch is past the point of donation and marked for composting - no buyer/NGO match needed.",
+            }
 
         wanted_type = "ngo" if action == "donate" else "buyer"
+        lat, lng = batch["latitude"], batch["longitude"]
 
-        partners = conn.execute(
-            "SELECT * FROM partners WHERE partner_type = ?", (wanted_type,)
-        ).fetchall()
+        # --- 1. Live data flow: query real partners near this batch's location ---
+        scored = find_live_partners(lat, lng, wanted_type, limit=limit)
 
-        # Fallback: if the preferred partner type is empty for some reason,
-        # widen the search to all partners rather than returning nothing.
-        if not partners:
-            partners = conn.execute("SELECT * FROM partners").fetchall()
+        # If donate had zero live NGOs nearby, don't leave the seller with nothing -
+        # widen to buyers too (mirrors the old "fall back to all partners" behavior).
+        if not scored and wanted_type == "ngo":
+            scored = find_live_partners(lat, lng, "buyer", limit=limit)
 
-        scored = []
-        for p in partners:
-            dist = haversine_km(batch["latitude"], batch["longitude"], p["latitude"], p["longitude"])
-            scored.append({
-                "id": p["id"],
-                "name": p["name"],
-                "partner_type": p["partner_type"],
-                "contact": p["contact"],
-                "website": p["website"],
-                "address": p["address"],
-                "image_url": p["image_url"],
-                "notes": p["notes"],
-                "is_placeholder": bool(p["is_placeholder"]),
-                "distance_km": round(dist, 1),
-            })
+        source = "openstreetmap" if scored else None
 
-        scored.sort(key=lambda x: x["distance_km"])
+        # --- 2. Safety-net fallback: seeded table, only if live data came up empty ---
+        if not scored:
+            partners = conn.execute(
+                "SELECT * FROM partners WHERE partner_type = ?", (wanted_type,)
+            ).fetchall()
+            if not partners:
+                partners = conn.execute("SELECT * FROM partners").fetchall()
+
+            for p in partners:
+                dist = haversine_km(lat, lng, p["latitude"], p["longitude"])
+                scored.append({
+                    "id": p["id"],
+                    "name": p["name"],
+                    "partner_type": p["partner_type"],
+                    "contact": p["contact"],
+                    "website": p["website"],
+                    "address": p["address"],
+                    "image_url": p["image_url"],
+                    "notes": p["notes"],
+                    "is_placeholder": bool(p["is_placeholder"]),
+                    "source": "seed_data",
+                    "distance_km": round(dist, 1),
+                })
+            scored.sort(key=lambda x: x["distance_km"])
+            source = "seed_data" if scored else None
 
     return {
         "batch_id": batch_id,
         "recommended_action": action,
         "matches": scored[:limit],
+        "source": source,
     }
 
 
@@ -480,6 +508,10 @@ def get_impact_metrics():
         ).fetchone()["total"]
 
         expired = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'expired'").fetchone()["c"]
+        composted = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'compost'").fetchone()["c"]
+        kg_composted = conn.execute(
+            "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches WHERE status = 'compost'"
+        ).fetchone()["total"]
 
         rescued_count = conn.execute(
             "SELECT COUNT(*) as c FROM batches WHERE status IN ('claimed', 'completed')"
@@ -517,9 +549,11 @@ def get_impact_metrics():
         "batches_rescued": rescued_count,
         "batches_in_progress": in_progress_count,
         "batches_expired": expired,
+        "batches_composted": composted,
         "kg_rescued": round(kg_rescued, 1),
         "kg_in_progress": round(kg_in_progress, 1),
         "kg_currently_at_risk": round(kg_at_risk, 1),
+        "kg_composted": round(kg_composted, 1),
         "revenue_recovered": round(revenue_recovered, 2),
     }
 

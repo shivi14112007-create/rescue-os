@@ -10,6 +10,7 @@ const FILTERS = [
   { key: "markdown", label: "Markdown" },
   { key: "fast_track", label: "Fast-Track" },
   { key: "donate", label: "Donate" },
+  { key: "compost", label: "Compost" },
 ];
 
 // Radius options mirror the "shops within N meters" pattern used by production
@@ -28,6 +29,7 @@ const TILE_BG = {
   markdown: "bg-markdown-light",
   fast_track: "bg-fasttrack-light",
   donate: "bg-donate-light",
+  compost: "bg-compost-light",
 };
 
 export default function Marketplace({ batches, onClaim, onSelect }) {
@@ -196,6 +198,8 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
                   <div className="text-sm mt-1">
                     {b.recommended_action === "donate" ? (
                       <span className="text-donate font-semibold">Free · Pickup Only</span>
+                    ) : b.recommended_action === "compost" ? (
+                      <span className="text-compost font-semibold">Free · For Composting</span>
                     ) : (
                       <>
                         <span className="text-ink font-semibold">
@@ -238,7 +242,11 @@ export default function Marketplace({ batches, onClaim, onSelect }) {
                       onClick={() => setClaimingId(b.id)}
                       className="border border-brand text-brand text-sm font-medium py-1.5 rounded-lg hover:bg-brand-light transition-colors"
                     >
-                      {b.recommended_action === "donate" ? "Claim Donation" : "View Details"}
+                      {b.recommended_action === "donate"
+                        ? "Claim Donation"
+                        : b.recommended_action === "compost"
+                        ? "Claim for Compost"
+                        : "View Details"}
                     </button>
                   )}
                 </div>
