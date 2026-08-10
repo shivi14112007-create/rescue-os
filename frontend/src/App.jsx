@@ -15,7 +15,7 @@ import LocationMap from "./components/LocationMap";
 import LanguageToggle from "./components/LanguageToggle";
 import { useLanguage } from "./i18n/LanguageContext";
 
-import { Bell, MapPin } from "lucide-react";
+import { Bell, MapPin, Loader2 } from "lucide-react";
 
 import LandingPage from "./components/LandingPage";
 
@@ -31,16 +31,17 @@ export default function App() {
   const [impact, setImpact] = useState(null);
   const [selectedBatch, setSelectedBatch] = useState(null);
 
-  const [connectionError, setConnectionError] =
-    useState(false);
+  const [connectionError, setConnectionError] = useState(false);
+
+  const [currentLocation, setCurrentLocation] =
+    useState("Detecting location...");
 
   async function refresh() {
     try {
-      const [batchList, impactData] =
-        await Promise.all([
-          listBatches(),
-          getImpact(),
-        ]);
+      const [batchList, impactData] = await Promise.all([
+        listBatches(),
+        getImpact(),
+      ]);
 
       setBatches(batchList);
       setImpact(impactData);
@@ -54,16 +55,69 @@ export default function App() {
     refresh();
   }, []);
 
+  // =========================
+  // CURRENT LOCATION
+  // =========================
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setCurrentLocation("Location unavailable");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          );
+
+          if (!response.ok) {
+            throw new Error("Location lookup failed");
+          }
+
+          const data = await response.json();
+          const address = data.address || {};
+
+          const location =
+            address.city ||
+            address.town ||
+            address.village ||
+            address.suburb ||
+            address.county ||
+            "Current Location";
+
+          const state = address.state || "";
+
+          setCurrentLocation(
+            state ? `${location}, ${state}` : location
+          );
+        } catch {
+          setCurrentLocation(
+            `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+          );
+        }
+      },
+      () => {
+        setCurrentLocation("Location permission denied");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 300000,
+      }
+    );
+  }, []);
+
   function handleGetStarted() {
     setShowLanding(false);
     setPage("dashboard");
   }
 
   function handleBatchCreated(newBatch) {
-    setBatches((prev) => [
-      newBatch,
-      ...prev,
-    ]);
+    setBatches((prev) => [newBatch, ...prev]);
 
     getImpact()
       .then(setImpact)
@@ -75,9 +129,7 @@ export default function App() {
   function handleClaim(updatedBatch) {
     setBatches((prev) =>
       prev.map((b) =>
-        b.id === updatedBatch.id
-          ? updatedBatch
-          : b
+        b.id === updatedBatch.id ? updatedBatch : b
       )
     );
 
@@ -99,7 +151,7 @@ export default function App() {
   }
 
   // =========================
-  // DASHBOARD APP
+  // DASHBOARD
   // =========================
 
   return (
@@ -126,8 +178,7 @@ export default function App() {
 
               {page === "dashboard" &&
                 t("header.greeting", {
-                  name:
-                    SELLER_NAME.split(" ")[0],
+                  name: SELLER_NAME.split(" ")[0],
                 })}
 
               {page === "add" &&
@@ -143,9 +194,7 @@ export default function App() {
 
             {page === "dashboard" && (
               <p className="text-muted text-sm">
-                {t(
-                  "header.dashboardSubtitle"
-                )}
+                {t("header.dashboardSubtitle")}
               </p>
             )}
           </div>
@@ -154,13 +203,20 @@ export default function App() {
 
           <div className="flex items-center gap-3">
 
-            {/* LOCATION */}
+            {/* CURRENT LOCATION */}
 
             <div className="hidden sm:flex items-center gap-1.5 text-sm text-muted border border-border rounded-full px-3 py-1.5">
 
-              <MapPin size={14} />
+              {currentLocation === "Detecting location..." ? (
+                <Loader2
+                  size={14}
+                  className="animate-spin"
+                />
+              ) : (
+                <MapPin size={14} />
+              )}
 
-              Azadpur Mandi, Delhi
+              <span>{currentLocation}</span>
 
             </div>
 
@@ -198,9 +254,7 @@ export default function App() {
             </div>
           )}
 
-          {/* =========================
-              DASHBOARD
-          ========================= */}
+          {/* DASHBOARD */}
 
           {page === "dashboard" && (
             <>
@@ -217,9 +271,7 @@ export default function App() {
 
                 <RecentBatchesTable
                   batches={batches}
-                  onSelect={
-                    setSelectedBatch
-                  }
+                  onSelect={setSelectedBatch}
                 />
 
                 <ImpactSnapshot
@@ -232,22 +284,16 @@ export default function App() {
             </>
           )}
 
-          {/* =========================
-              ADD BATCH
-          ========================= */}
+          {/* ADD BATCH */}
 
           {page === "add" && (
             <AddBatchForm
               sellerName={SELLER_NAME}
-              onBatchCreated={
-                handleBatchCreated
-              }
+              onBatchCreated={handleBatchCreated}
             />
           )}
 
-          {/* =========================
-              MY BATCHES
-          ========================= */}
+          {/* MY BATCHES */}
 
           {page === "batches" && (
             <MyBatches
@@ -256,9 +302,7 @@ export default function App() {
             />
           )}
 
-          {/* =========================
-              MARKETPLACE
-          ========================= */}
+          {/* MARKETPLACE */}
 
           {page === "marketplace" && (
             <Marketplace
@@ -271,15 +315,11 @@ export default function App() {
         </div>
       </main>
 
-      {/* =========================
-          BATCH DETAIL
-      ========================= */}
+      {/* BATCH DETAIL */}
 
       <BatchDetail
         batch={selectedBatch}
-        onClose={() =>
-          setSelectedBatch(null)
-        }
+        onClose={() => setSelectedBatch(null)}
       />
 
     </div>
