@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Phone, MessageCircle, Globe, MapPin, Radar, Loader2 } from "lucide-react";
+import { Phone, MessageCircle, Globe, Mail, MapPin, Radar, Loader2 } from "lucide-react";
 import { getMatches } from "../api";
 
 /**
@@ -15,6 +15,7 @@ import { getMatches } from "../api";
  */
 export default function SuggestedMatches({ batch }) {
   const [matches, setMatches] = useState(null);
+  const [source, setSource] = useState(null); // "openstreetmap" | "seed_data" | null
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -32,7 +33,10 @@ export default function SuggestedMatches({ batch }) {
     setLoading(true);
     getMatches(batch.id)
       .then((data) => {
-        if (!cancelled) setMatches(data.matches || []);
+        if (!cancelled) {
+          setMatches(data.matches || []);
+          setSource(data.source || null);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err.message);
@@ -49,26 +53,41 @@ export default function SuggestedMatches({ batch }) {
 
   return (
     <div className="bg-fasttrack-light border border-fasttrack/20 rounded-xl p-4">
-      <div className="flex items-center gap-2 text-fasttrack font-semibold text-sm mb-3">
-        <Radar size={15} />
-        Suggested Rescue Matches
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 text-fasttrack font-semibold text-sm">
+          <Radar size={15} />
+          Suggested Rescue Matches
+        </div>
+        {!loading && source === "openstreetmap" && (
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-brand bg-brand-light px-1.5 py-0.5 rounded shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand animate-pulse" />
+            LIVE · NEAR YOU
+          </span>
+        )}
       </div>
 
       {loading && (
         <div className="flex items-center gap-2 text-muted text-xs py-2">
           <Loader2 size={14} className="animate-spin" />
-          Finding nearby NGOs / buyers...
+          Searching real NGOs/buyers near this batch's location...
         </div>
       )}
 
       {error && <p className="text-xs text-red-600">Couldn't load matches: {error}</p>}
 
       {!loading && !error && matches?.length === 0 && (
-        <p className="text-xs text-muted">No nearby partners found for this batch yet.</p>
+        <p className="text-xs text-muted">
+          No nearby partners found for this batch's location yet.
+        </p>
       )}
 
       {!loading && matches?.length > 0 && (
         <div className="flex flex-col gap-2">
+          {source === "seed_data" && (
+            <p className="text-[11px] text-muted italic">
+              No live results nearby - showing the starter directory instead.
+            </p>
+          )}
           {matches.map((m) => (
             <PartnerCard key={m.id} partner={m} />
           ))}
@@ -78,9 +97,10 @@ export default function SuggestedMatches({ batch }) {
   );
 }
 
-function whatsappHref(contact) {
-  if (!contact) return null;
-  const digits = contact.replace(/[^\d]/g, "");
+function whatsappHref(partner) {
+  const raw = partner.whatsapp || partner.contact;
+  if (!raw) return null;
+  const digits = raw.replace(/[^\d]/g, "");
   if (!digits) return null;
   // assume already includes country code (India numbers stored with +91)
   return `https://wa.me/${digits}`;
@@ -98,7 +118,7 @@ function initials(name) {
 
 function PartnerCard({ partner }) {
   const hasImage = Boolean(partner.image_url);
-  const wa = whatsappHref(partner.contact);
+  const wa = whatsappHref(partner);
 
   return (
     <div className="bg-panel rounded-lg px-3 py-2.5 border border-border">
@@ -123,6 +143,11 @@ function PartnerCard({ partner }) {
               {partner.is_placeholder && (
                 <span className="text-[10px] font-semibold text-donate bg-donate-light px-1.5 py-0.5 rounded shrink-0">
                   EXAMPLE
+                </span>
+              )}
+              {partner.source === "openstreetmap" && (
+                <span className="text-[10px] font-semibold text-muted bg-panel border border-border px-1.5 py-0.5 rounded shrink-0">
+                  OpenStreetMap
                 </span>
               )}
             </div>
@@ -177,7 +202,16 @@ function PartnerCard({ partner }) {
             Website
           </a>
         )}
-        {!partner.contact && !wa && !partner.website && (
+        {partner.email && (
+          <a
+            href={`mailto:${partner.email}`}
+            className="flex items-center gap-1 text-xs font-semibold text-brand"
+          >
+            <Mail size={12} />
+            Email
+          </a>
+        )}
+        {!partner.contact && !wa && !partner.website && !partner.email && (
           <span className="text-xs text-muted">No public contact info available</span>
         )}
       </div>
