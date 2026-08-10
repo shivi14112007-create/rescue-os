@@ -12,137 +12,391 @@ import "leaflet/dist/leaflet.css";
 function ChangeMapView({ position }) {
   const map = useMap();
 
-  map.setView(position, 15);
+  map.setView(position, 14);
 
   return null;
 }
 
 function LocationMap() {
-  const [position, setPosition] = useState([28.7041, 77.1025]);
+  const [position, setPosition] = useState([
+    28.7041,
+    77.1025
+  ]);
+
   const [loading, setLoading] = useState(false);
+  const [rescuePartners, setRescuePartners] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [bestOption, setBestOption] = useState(null);
+  const [error, setError] = useState("");
 
-  const rescuePartners = [
-    {
-      id: 1,
-      name: "Fresh Foods Processing",
-      type: "buyer",
-      lat: 28.714763,
-      lng: 77.110345,
-      offer: "₹18/kg",
-      capacity: "500 kg"
-    },
-    {
-      id: 2,
-      name: "Local Retailer",
-      type: "buyer",
-      lat: 28.6955,
-      lng: 77.115,
-      offer: "₹20/kg",
-      capacity: "100 kg"
-    },
-    {
-      id: 3,
-      name: "Food Rescue NGO",
-      type: "ngo",
-      lat: 28.725,
-      lng: 77.09,
-      offer: "Donation",
-      capacity: "300 kg"
-    }
-  ];
+  async function findNearbyPlaces(lat, lng) {
+    const radius = 5000;
 
-  async function getRoutes(start) {
+    const query = `
+      [out:json][timeout:10];
+
+      (
+        nwr[
+          "shop"~"supermarket|greengrocer|wholesale|fruit|vegetable"
+        ](around:${radius},${lat},${lng});
+
+        nwr[
+          "amenity"="marketplace"
+        ](around:${radius},${lat},${lng});
+
+        nwr[
+          "amenity"="food_bank"
+        ](around:${radius},${lat},${lng});
+
+        nwr[
+          "social_facility"="food_bank"
+        ](around:${radius},${lat},${lng});
+      );
+
+      out center tags;
+    `;
+
     try {
-      const results = await Promise.all(
-        rescuePartners.map(async (partner) => {
-          const url =
-            `https://router.project-osrm.org/route/v1/driving/` +
-            `${start[1]},${start[0]};${partner.lng},${partner.lat}` +
-            `?overview=full&geometries=geojson`;
+      const response = await fetch(
+        "https://overpass-api.de/api/interpreter",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/x-www-form-urlencoded"
+          },
+          body: `data=${encodeURIComponent(query)}`
+        }
+      );
 
-          const response = await fetch(url);
-          const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          "Nearby places service unavailable"
+        );
+      }
 
-          if (data.code !== "Ok") {
+      const data = await response.json();
+
+      const places = data.elements
+        .map((place) => {
+          const placeLat =
+            place.lat ?? place.center?.lat;
+
+          const placeLng =
+            place.lon ?? place.center?.lon;
+
+          if (
+            placeLat === undefined ||
+            placeLng === undefined
+          ) {
             return null;
           }
 
-          const routeCoordinates =
-            data.routes[0].geometry.coordinates;
+          const tags = place.tags || {};
 
-          const leafletCoordinates = routeCoordinates.map(
-            ([lng, lat]) => [lat, lng]
-          );
+          let type = "buyer";
+
+          if (
+            tags.amenity === "food_bank" ||
+            tags.social_facility === "food_bank"
+          ) {
+            type = "ngo";
+          }
+
+          if (
+            tags.name === undefined &&
+            tags.shop === undefined &&
+            tags.amenity === undefined
+          ) {
+            return null;
+          }
+
+          const name =
+            tags.name ||
+            tags.operator ||
+            "Nearby Food Location";
 
           return {
-            ...partner,
-            distance: (data.routes[0].distance / 1000).toFixed(2),
-            duration: Math.round(
-              data.routes[0].duration / 60
-            ),
-            coordinates: leafletCoordinates
+            id: `${place.type}-${place.id}`,
+            name,
+            type,
+            lat: Number(placeLat),
+            lng: Number(placeLng),
+            category:
+              tags.shop ||
+              tags.amenity ||
+              tags.social_facility ||
+              "food"
           };
+        })
+        .filter(Boolean);
+
+      const uniquePlaces = Array.from(
+        new Map(
+          places.map((place) => [
+            `${place.lat.toFixed(5)}-${place.lng.toFixed(5)}`,
+            place
+          ])
+        ).values()
+      );
+
+      const withDistance = uniquePlaces.map(
+        (place) => ({
+          ...place,
+          roughDistance:
+            calculateDistance(
+              lat,
+              lng,
+              place.lat,
+              place.lng
+            )
         })
       );
 
-      const validRoutes = results.filter(Boolean);
+      withDistance.sort(
+        (a, b) =>
+          a.roughDistance -
+          b.roughDistance
+      );
+
+      return withDistance.slice(0, 5);
+    } catch (err) {
+      console.log(
+        "Nearby places error:",
+        err
+      );
+
+      throw err;
+    }
+  }
+
+  function calculateDistance(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+  ) {
+    const R = 6371;
+
+    const dLat =
+      ((lat2 - lat1) * Math.PI) / 180;
+
+    const dLon =
+      ((lon2 - lon1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(dLat / 2) *
+        Math.sin(dLat / 2) +
+      Math.cos(
+        (lat1 * Math.PI) / 180
+      ) *
+        Math.cos(
+          (lat2 * Math.PI) / 180
+        ) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+
+    const c =
+      2 *
+      Math.atan2(
+        Math.sqrt(a),
+        Math.sqrt(1 - a)
+      );
+
+    return R * c;
+  }
+
+  async function getRoutes(
+    start,
+    partners
+  ) {
+    try {
+      const results =
+        await Promise.all(
+          partners.map(
+            async (partner) => {
+              try {
+                const url =
+                  `https://router.project-osrm.org/route/v1/driving/` +
+                  `${start[1]},${start[0]};` +
+                  `${partner.lng},${partner.lat}` +
+                  `?overview=full&geometries=geojson`;
+
+                const response =
+                  await fetch(url);
+
+                const data =
+                  await response.json();
+
+                if (
+                  data.code !== "Ok" ||
+                  !data.routes?.length
+                ) {
+                  return null;
+                }
+
+                const route =
+                  data.routes[0];
+
+                const coordinates =
+                  route.geometry.coordinates.map(
+                    ([lng, lat]) => [
+                      lat,
+                      lng
+                    ]
+                  );
+
+                return {
+                  ...partner,
+
+                  distance: (
+                    route.distance / 1000
+                  ).toFixed(2),
+
+                  duration: Math.max(
+                    1,
+                    Math.round(
+                      route.duration / 60
+                    )
+                  ),
+
+                  coordinates
+                };
+              } catch (err) {
+                console.log(
+                  "Route error:",
+                  err
+                );
+
+                return null;
+              }
+            }
+          )
+        );
+
+      const validRoutes =
+        results.filter(Boolean);
 
       setRoutes(validRoutes);
 
-      if (validRoutes.length > 0) {
-        const buyers = validRoutes.filter(
-          (item) => item.type === "buyer"
+      const buyers =
+        validRoutes.filter(
+          (item) =>
+            item.type === "buyer"
         );
 
+      const candidates =
+        buyers.length > 0
+          ? buyers
+          : validRoutes;
+
+      if (candidates.length > 0) {
         const best =
-          buyers.length > 0
-            ? buyers.sort(
-                (a, b) =>
-                  parseFloat(a.distance) -
-                  parseFloat(b.distance)
-              )[0]
-            : validRoutes[0];
+          [...candidates].sort(
+            (a, b) =>
+              parseFloat(
+                a.distance
+              ) -
+              parseFloat(
+                b.distance
+              )
+          )[0];
 
         setBestOption(best);
+      } else {
+        setBestOption(null);
       }
-    } catch (error) {
-      console.log("Route error:", error);
+    } catch (err) {
+      console.log(
+        "OSRM error:",
+        err
+      );
+
+      setRoutes([]);
+      setBestOption(null);
     }
   }
 
   function getLocation() {
     if (!navigator.geolocation) {
-      alert(
+      setError(
         "Geolocation is not supported by your browser."
       );
+
       return;
     }
 
     setLoading(true);
+    setError("");
+    setRoutes([]);
+    setBestOption(null);
+    setRescuePartners([]);
 
     navigator.geolocation.getCurrentPosition(
-      (location) => {
-        const lat = location.coords.latitude;
-        const lng = location.coords.longitude;
+      async (location) => {
+        try {
+          const lat =
+            location.coords.latitude;
 
-        const newPosition = [lat, lng];
+          const lng =
+            location.coords.longitude;
 
-        setPosition(newPosition);
+          const newPosition = [
+            lat,
+            lng
+          ];
 
-        getRoutes(newPosition);
+          setPosition(
+            newPosition
+          );
 
-        setLoading(false);
+          const places =
+            await findNearbyPlaces(
+              lat,
+              lng
+            );
+
+          if (!places.length) {
+            setError(
+              "No nearby food-related places were found in OpenStreetMap."
+            );
+
+            setLoading(false);
+
+            return;
+          }
+
+          setRescuePartners(
+            places
+          );
+
+          await getRoutes(
+            newPosition,
+            places
+          );
+        } catch (err) {
+          console.log(err);
+
+          setError(
+            "Could not find nearby rescue options. Please try again."
+          );
+        } finally {
+          setLoading(false);
+        }
       },
       (error) => {
         console.log(error);
 
-        alert(
+        setError(
           "Location access denied. Please allow location permission."
         );
 
         setLoading(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000
       }
     );
   }
@@ -150,31 +404,38 @@ function LocationMap() {
   return (
     <div className="bg-panel border border-border rounded-xl p-5">
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-4">
+
         <div>
           <h2 className="text-lg font-bold text-ink">
-            Your Location
+            Nearby Rescue Partners
           </h2>
 
           <p className="text-sm text-muted">
-            Find nearby buyers and NGOs for faster
-            produce rescue.
+            Find real nearby markets,
+            buyers and food rescue
+            organizations.
           </p>
         </div>
 
         <button
           onClick={getLocation}
-          className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80"
+          disabled={loading}
+          className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:opacity-80 disabled:opacity-50"
         >
-          📍{" "}
           {loading
-            ? "Getting location..."
+            ? "Finding nearby places..."
             : "Use My Location"}
         </button>
+
       </div>
 
-      {/* Map */}
+      {error && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
       <MapContainer
         center={position}
         zoom={13}
@@ -184,159 +445,168 @@ function LocationMap() {
           borderRadius: "12px"
         }}
       >
-        <ChangeMapView position={position} />
+
+        <ChangeMapView
+          position={position}
+        />
 
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {/* Seller Location */}
         <Marker position={position}>
           <Popup>
-            <strong>📍 Your Location</strong>
+            <strong>
+              Your Location
+            </strong>
+
             <br />
+
             Seller / Produce Batch
           </Popup>
         </Marker>
 
-        {/* Buyers and NGOs */}
-        {rescuePartners.map((partner) => (
-          <Marker
-            key={partner.id}
-            position={[
-              partner.lat,
-              partner.lng
-            ]}
-          >
-            <Popup>
-              <strong>
+        {rescuePartners.map(
+          (partner) => (
+            <Marker
+              key={partner.id}
+              position={[
+                partner.lat,
+                partner.lng
+              ]}
+            >
+              <Popup>
+
+                <strong>
+                  {partner.name}
+                </strong>
+
+                <br />
+
                 {partner.type === "ngo"
-                  ? "🤝"
-                  : "🏭"}{" "}
-                {partner.name}
-              </strong>
+                  ? "Food Rescue / Food Bank"
+                  : "Potential Produce Buyer"}
 
-              <br />
+                <br />
 
-              {partner.type === "ngo"
-                ? "Donation"
-                : `Offer: ${partner.offer}`}
+                Category:{" "}
+                {partner.category}
 
-              <br />
+              </Popup>
+            </Marker>
+          )
+        )}
 
-              Capacity: {partner.capacity}
-            </Popup>
-          </Marker>
-        ))}
+        {routes.map(
+          (item) => (
+            <Polyline
+              key={item.id}
+              positions={
+                item.coordinates
+              }
+            />
+          )
+        )}
 
-        {/* Routes */}
-        {routes.map((item) => (
-          <Polyline
-            key={item.id}
-            positions={item.coordinates}
-          />
-        ))}
       </MapContainer>
 
-      {/* Route Cards */}
       {routes.length > 0 && (
-        <div className="mt-4">
+        <div className="mt-5">
 
           <h3 className="text-base font-bold text-ink mb-3">
             Nearby Rescue Options
           </h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
 
-            {routes.map((item) => (
-              <div
-                key={item.id}
-                className="bg-canvas border border-border rounded-lg p-4"
-              >
-                <div className="font-semibold text-ink">
-                  {item.type === "ngo"
-                    ? "🤝"
-                    : "🏭"}{" "}
-                  {item.name}
-                </div>
+            {routes.map(
+              (item) => (
+                <div
+                  key={item.id}
+                  className="bg-canvas border border-border rounded-lg p-4"
+                >
 
-                <div className="text-sm text-muted mt-2">
-                  📏 {item.distance} km
-                </div>
+                  <div className="font-semibold text-ink">
+                    {item.name}
+                  </div>
 
-                <div className="text-sm text-muted">
-                  ⏱️ {item.duration} min
-                </div>
+                  <div className="text-sm text-muted mt-2">
+                    Distance:{" "}
+                    {item.distance} km
+                  </div>
 
-                <div className="text-sm text-muted mt-1">
-                  {item.offer}
-                </div>
+                  <div className="text-sm text-muted">
+                    Estimated time:{" "}
+                    {item.duration} min
+                  </div>
 
-                <div className="text-sm text-muted">
-                  📦 Capacity: {item.capacity}
+                  <div className="text-sm text-muted mt-1">
+                    {item.type === "ngo"
+                      ? "Food Rescue / Donation"
+                      : "Potential Buyer"}
+                  </div>
+
                 </div>
-              </div>
-            ))}
+              )
+            )}
 
           </div>
+
         </div>
       )}
 
-      {/* Best Option */}
       {bestOption && (
         <div className="mt-5 bg-canvas border border-border rounded-xl p-5">
 
           <div className="text-sm text-muted">
-            AI Rescue Recommendation
+            Rescue Recommendation
           </div>
 
           <div className="text-xl font-bold text-ink mt-1">
-            🏆 {bestOption.name}
+            {bestOption.name}
           </div>
 
           <div className="flex flex-wrap gap-4 mt-3 text-sm text-muted">
+
             <span>
-              📏 {bestOption.distance} km
+              {bestOption.distance} km
             </span>
 
             <span>
-              ⏱️ {bestOption.duration} min
+              {bestOption.duration} min
             </span>
 
             <span>
-              💰 {bestOption.offer}
+              Potential Buyer
             </span>
 
-            <span>
-              📦 {bestOption.capacity}
-            </span>
           </div>
 
           <p className="text-sm text-muted mt-3">
-            Recommended because this is the closest
-            suitable buyer with available capacity.
+            This location is currently the
+            closest suitable buyer found
+            near your current location.
           </p>
-
-          <button
-            className="mt-4 bg-black text-white px-5 py-2 rounded-lg text-sm font-medium hover:opacity-80"
-            onClick={() =>
-              alert(
-                `Rescue deal created with ${bestOption.name}`
-              )
-            }
-          >
-            Create Rescue Deal
-          </button>
 
         </div>
       )}
 
-      {/* Coordinates */}
       <div className="mt-3 text-sm text-muted">
-        Latitude: {position[0].toFixed(6)}
+        Latitude:{" "}
+        {position[0].toFixed(6)}
+
         <br />
-        Longitude: {position[1].toFixed(6)}
+
+        Longitude:{" "}
+        {position[1].toFixed(6)}
+      </div>
+
+      <div className="mt-3 text-xs text-muted">
+        Map data © OpenStreetMap
+        contributors. Nearby places
+        provided by OpenStreetMap
+        Overpass.
       </div>
 
     </div>
