@@ -36,6 +36,12 @@ STORAGE_MULTIPLIERS = {
 
 DEFAULT_BASE_SHELF_LIFE = 5  # fallback for produce types not in our table
 
+# Once a batch has been past its shelf life for this many extra days, it's
+# assumed to be spoiled beyond even donation - composting is the only
+# realistic outcome left. Keeps "expired" (just past shelf life, still
+# donate-able right now) distinct from "compost" (rotten, too far gone).
+COMPOST_THRESHOLD_DAYS = -3
+
 
 def estimate_remaining_shelf_life(
     produce_type: str,
@@ -60,7 +66,9 @@ def estimate_remaining_shelf_life(
 
 def classify_status(remaining_days: float) -> str:
     """Bucket the remaining days into a status for the dashboard UI."""
-    if remaining_days <= 0:
+    if remaining_days <= COMPOST_THRESHOLD_DAYS:
+        return "compost"
+    elif remaining_days <= 0:
         return "expired"
     elif remaining_days <= 1:
         return "urgent"

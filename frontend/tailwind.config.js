@@ -19,6 +19,8 @@ export default {
         "fasttrack-light": "#FCEBE3",
         donate: "#D64545",        // red - donate
         "donate-light": "#FBE9E9",
+        compost: "#6B4423",       // brown - compost
+        "compost-light": "#EFE7DE",
         hold: "#1E7A46",
       },
       fontFamily: {

@@ -312,7 +312,8 @@ def escalate_batch(batch_id: int):
             "hold": "markdown",
             "markdown": "fast_track",
             "fast_track": "donate",
-            "donate": "donate",
+            "donate": "compost",
+            "compost": "compost",
         }
 
         next_action = escalation_map.get(
@@ -390,6 +391,12 @@ def match_batch(batch_id: int, limit: int = 3):
                 "batch_id": batch_id,
                 "matches": [],
                 "message": "Batch is currently on hold, no rescue match needed yet.",
+            }
+        if action == "compost":
+            return {
+                "batch_id": batch_id,
+                "matches": [],
+                "message": "Batch is past the point of donation and marked for composting - no buyer/NGO match needed.",
             }
 
         wanted_type = "ngo" if action == "donate" else "buyer"
@@ -501,6 +508,10 @@ def get_impact_metrics():
         ).fetchone()["total"]
 
         expired = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'expired'").fetchone()["c"]
+        composted = conn.execute("SELECT COUNT(*) as c FROM batches WHERE status = 'compost'").fetchone()["c"]
+        kg_composted = conn.execute(
+            "SELECT COALESCE(SUM(quantity_kg), 0) as total FROM batches WHERE status = 'compost'"
+        ).fetchone()["total"]
 
         rescued_count = conn.execute(
             "SELECT COUNT(*) as c FROM batches WHERE status IN ('claimed', 'completed')"
@@ -538,9 +549,11 @@ def get_impact_metrics():
         "batches_rescued": rescued_count,
         "batches_in_progress": in_progress_count,
         "batches_expired": expired,
+        "batches_composted": composted,
         "kg_rescued": round(kg_rescued, 1),
         "kg_in_progress": round(kg_in_progress, 1),
         "kg_currently_at_risk": round(kg_at_risk, 1),
+        "kg_composted": round(kg_composted, 1),
         "revenue_recovered": round(revenue_recovered, 2),
     }
 

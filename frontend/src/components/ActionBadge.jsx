@@ -3,6 +3,7 @@ const CONFIG = {
   markdown: { label: "Markdown", bg: "bg-markdown-light", text: "text-markdown" },
   fast_track: { label: "Fast-Track", bg: "bg-fasttrack-light", text: "text-fasttrack" },
   donate: { label: "Donate", bg: "bg-donate-light", text: "text-donate" },
+  compost: { label: "Compost", bg: "bg-compost-light", text: "text-compost" },
 };
 
 export default function ActionBadge({ action, discountPct, small = false }) {
