@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { previewBatch, createBatch } from "../api";
+import { previewBatch, createBatch, analyzeProduceImage } from "../api";
 import { getBrowserLocation, reverseGeocode } from "../geo";
 import ActionBadge from "./ActionBadge";
+import QualityBadge from "./QualityBadge";
 import MicButton from "./MicButton";
 import SpeakButton from "./SpeakButton";
 import { useLanguage } from "../i18n/LanguageContext";
@@ -14,6 +15,7 @@ import {
   Upload,
   X,
   RefreshCw,
+  ScanEye,
 } from "lucide-react";
 
 const PRODUCE_OPTIONS = [
@@ -55,6 +57,11 @@ const emptyForm = {
   seller_name: "",
   price_per_kg: "",
   notes: "",
+  // Filled in automatically by Produce Vision once a photo is analyzed -
+  // left null for manual entries, exactly like before this feature existed.
+  quality_label: null,
+  quality_score: null,
+  vision_source: null,
 };
 
 export default function AddBatchForm({
@@ -93,6 +100,16 @@ export default function AddBatchForm({
 
   const [photoLoading, setPhotoLoading] =
     useState(false);
+
+  // PRODUCE VISION (type + quality detection from the photo)
+  const [visionResult, setVisionResult] =
+    useState(null);
+
+  const [visionLoading, setVisionLoading] =
+    useState(false);
+
+  const [visionError, setVisionError] =
+    useState(null);
 
   // CAMERA
   const [cameraOpen, setCameraOpen] =
@@ -198,6 +215,48 @@ export default function AddBatchForm({
     };
 
     reader.readAsDataURL(file);
+
+    runVisionAnalysis(file);
+  }
+
+  // =========================
+  // PRODUCE VISION
+  // Sends the photo to POST /vision/analyze-image and, on success, auto-fills
+  // produce_type (only if the model is confident and it's a type we know
+  // about) plus the visible-quality grade, which nudges the shelf-life
+  // estimate on the backend. Falls back gracefully: on any failure we just
+  // leave the fields for the seller to fill in manually, exactly like before
+  // this feature existed - it's a shortcut, never a requirement.
+  // =========================
+
+  async function runVisionAnalysis(file) {
+    setVisionLoading(true);
+    setVisionError(null);
+    setVisionResult(null);
+
+    try {
+      const result = await analyzeProduceImage(file);
+      setVisionResult(result);
+
+      setForm((current) => ({
+        ...current,
+        produce_type:
+          result.produce_confidence >= 0.4 &&
+          PRODUCE_OPTIONS.includes(result.produce_type)
+            ? result.produce_type
+            : current.produce_type,
+        quality_label: result.quality_label,
+        quality_score: result.quality_score,
+        vision_source: result.source,
+      }));
+    } catch (err) {
+      setVisionError(
+        err?.message ||
+          "Couldn't analyze the photo automatically - please fill in the details manually."
+      );
+    } finally {
+      setVisionLoading(false);
+    }
   }
 
   // =========================
@@ -391,6 +450,8 @@ export default function AddBatchForm({
         setPhotoPreview(imageUrl);
 
         stopCamera();
+
+        runVisionAnalysis(file);
       },
       "image/jpeg",
       0.9
@@ -413,6 +474,17 @@ export default function AddBatchForm({
 
     setProducePhoto(null);
     setPhotoPreview("");
+
+    setVisionResult(null);
+    setVisionLoading(false);
+    setVisionError(null);
+
+    setForm((current) => ({
+      ...current,
+      quality_label: null,
+      quality_score: null,
+      vision_source: null,
+    }));
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -870,7 +942,48 @@ export default function AddBatchForm({
                       >
                         <X size={16} />
                       </button>
+
+                      {visionLoading && (
+                        <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
+                          <div className="flex items-center gap-2 bg-white/95 px-3 py-1.5 rounded-full text-xs font-medium text-ink">
+                            <Loader2 size={14} className="animate-spin" />
+                            Analyzing photo...
+                          </div>
+                        </div>
+                      )}
                     </div>
+
+                    {/* PRODUCE VISION RESULT */}
+                    {!visionLoading && visionResult && (
+                      <div className="mt-3 flex items-start gap-2 bg-canvas rounded-lg p-2.5">
+                        <ScanEye size={16} className="text-brand mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            <span className="text-xs font-medium text-ink capitalize">
+                              {visionResult.produce_type !== "unknown"
+                                ? visionResult.produce_type
+                                : "Type not detected"}
+                            </span>
+                            <QualityBadge
+                              qualityLabel={visionResult.quality_label}
+                              qualityScore={visionResult.quality_score}
+                              small
+                            />
+                          </div>
+                          {visionResult.reasoning && (
+                            <p className="text-xs text-muted leading-snug">
+                              {visionResult.reasoning}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {!visionLoading && visionError && (
+                      <p className="mt-3 text-xs text-donate">
+                        {visionError}
+                      </p>
+                    )}
 
                     <div className="mt-3 flex items-center justify-between">
 

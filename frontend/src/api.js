@@ -17,6 +17,16 @@ export async function createBatch(batch) {
   return handleResponse(res);
 }
 
+export async function analyzeProduceImage(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE_URL}/vision/analyze-image`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse(res);
+}
+
 export async function previewBatch(batch) {
   const res = await fetch(`${BASE_URL}/batches/preview`, {
     method: "POST",
