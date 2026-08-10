@@ -28,6 +28,22 @@ from groq import Groq, GroqError
 from google import genai
 from google.genai.errors import APIError as GeminiAPIError
 
+# ---- Trained produce-type classifier (RandomForest, sklearn) ----
+# Trained offline on a Fruits-360 subset (see train_produce_classifier.py).
+# Loaded once at import time; if the model file is missing (e.g. fresh clone
+# before training was run), we fall back to the old hand-tuned color/shape
+# heuristic further down so the endpoint never breaks.
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+_TYPE_MODEL_PATH = os.path.join(_MODEL_DIR, "produce_type_classifier.joblib")
+
+_type_model = None
+try:
+    import joblib
+    if os.path.exists(_TYPE_MODEL_PATH):
+        _type_model = joblib.load(_TYPE_MODEL_PATH)
+except Exception:
+    _type_model = None  # missing joblib/sklearn or corrupt file - heuristic fallback handles it
+
 # ---- Client setup (only initialized if the relevant key is present) ----
 groq_client = None
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -54,6 +70,13 @@ KNOWN_PRODUCE_TYPES = [
 
 QUALITY_LABELS = ["excellent", "good", "fair", "poor", "spoiled"]
 
+# Ripeness is a DIFFERENT axis from quality/spoilage: a tomato can be
+# perfectly fresh (quality=excellent) while still unripe (green) or overripe
+# (very soft/red, about to turn). Only meaningful for produce that visibly
+# changes color as it ripens - root veg like potato/onion/cauliflower don't
+# "ripen" in this sense, so they report "not_applicable".
+RIPENESS_LABELS = ["unripe", "ripe", "overripe", "not_applicable"]
+
 # How much a quality grade should nudge the shelf-life-days estimate that
 # app/shelf_life.py computes from harvest date alone. Produce that LOOKS
 # worse than its age suggests loses days; produce that looks great keeps
@@ -69,7 +92,7 @@ QUALITY_SHELF_LIFE_ADJUSTMENT = {
 
 SYSTEM_PROMPT = f"""You are a produce inspection agent for a fresh-produce rescue \
 marketplace. You are shown ONE photo of a batch of fruit or vegetables. Identify \
-what it is and grade its visible quality.
+what it is, grade its visible quality, and assess its ripeness.
 
 Respond with ONLY a JSON object (no markdown, no preamble) in this exact shape:
 {{
@@ -77,12 +100,17 @@ Respond with ONLY a JSON object (no markdown, no preamble) in this exact shape:
   "produce_confidence": <float 0-1>,
   "quality_label": "excellent" | "good" | "fair" | "poor" | "spoiled",
   "quality_score": <integer 0-100, 100 = perfect, 0 = fully rotten>,
+  "ripeness": "unripe" | "ripe" | "overripe" | "not_applicable",
   "defects_observed": ["<short phrase>", ...],
   "reasoning": "<one plain-language sentence a mandi trader can understand>"
 }}
 
 Guidelines:
 - Look for bruising, mould, dark/soft spots, shrivelling, discoloration, pest damage.
+- Ripeness is separate from quality: a green (unripe) tomato can still be in "excellent" \
+  quality condition, and a very soft/dark (overripe) one can look fine otherwise but be \
+  past its best. Use "not_applicable" for produce that doesn't ripen this way (potato, \
+  onion, cauliflower, and similar root/leafy veg).
 - If multiple items are visible, grade the batch as a whole (worst-affected pieces \
   pull the score down, but a few perfect items among mostly-good ones shouldn't \
   tank an otherwise fine batch).
@@ -102,6 +130,8 @@ def _parse_json_response(text: str) -> dict:
         raise ValueError("missing produce_type from model")
     parsed["quality_score"] = max(0, min(100, int(parsed.get("quality_score", 50))))
     parsed["produce_confidence"] = max(0.0, min(1.0, float(parsed.get("produce_confidence", 0.5))))
+    if parsed.get("ripeness") not in RIPENESS_LABELS:
+        parsed["ripeness"] = "not_applicable"
     parsed.setdefault("defects_observed", [])
     parsed.setdefault("reasoning", "")
     return parsed
@@ -210,30 +240,107 @@ def _classical_cv_fallback(image_bytes: bytes) -> dict:
     if not defects:
         defects.append("no significant surface defects detected")
 
-    # ---- Type heuristic (color + shape matching) ----
-    guessed_type, type_confidence, shape_note = _guess_produce_type_classical(hsv)
+    # ---- Shared segmentation (used by both type + ripeness) ----
+    seg = _segment_produce(hsv)
+
+    # ---- Type detection: trained RandomForest model first, hand-tuned
+    # color/shape heuristic as a second-level backup if the model file
+    # isn't present (e.g. someone runs the backend before training it) ----
+    model_result = _guess_produce_type_trained_model(image_bytes)
+    if model_result is not None:
+        guessed_type, type_confidence, shape_note = model_result
+        type_source = "trained_model"
+    else:
+        guessed_type, type_confidence, shape_note = _guess_produce_type_classical(seg)
+        type_source = "heuristic"
+
+    # ---- Ripeness (only meaningful for a few color-changing produce types) ----
+    ripeness_label, ripeness_confidence, ripeness_note = _estimate_ripeness_classical(
+        guessed_type, seg, defect_ratio
+    )
 
     reasoning = (
         f"Offline image analysis found {defect_ratio * 100:.1f}% of the surface "
         f"showing dark/brown discoloration - graded as '{label}'."
     )
     if guessed_type != "unknown":
+        model_note = "trained offline model" if type_source == "trained_model" else "color/shape rules, no AI model available"
         reasoning += (
-            f" Color/shape analysis (no AI model available) suggests this is most "
+            f" Type detection ({model_note}) suggests this is most "
             f"likely {guessed_type} ({shape_note}) - please confirm."
         )
     else:
         reasoning += " Could not confidently guess the produce type - please select it manually."
+
+    if ripeness_label != "not_applicable":
+        reasoning += f" Ripeness looks {ripeness_label} ({ripeness_note})."
 
     return {
         "produce_type": guessed_type,
         "produce_confidence": type_confidence,
         "quality_label": label,
         "quality_score": int(quality_score),
+        "ripeness": ripeness_label,
+        "ripeness_confidence": ripeness_confidence,
         "defects_observed": defects,
         "reasoning": reasoning,
-        "source": "classical_cv",
+        "source": f"classical_cv+{type_source}",
     }
+
+
+def _extract_type_model_features(image_bytes: bytes) -> np.ndarray:
+    """Same feature recipe used at training time (see train_produce_classifier.py):
+    HSV color histogram (H+S channels) + HOG on grayscale, 100x100 resized.
+    Must stay in sync with the training script or predictions will be garbage."""
+    import cv2
+    from skimage.feature import hog
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    arr = np.array(img)
+    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    bgr = cv2.resize(bgr, (100, 100))
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+
+    hist_h = cv2.calcHist([hsv], [0], None, [30], [0, 180]).flatten()
+    hist_s = cv2.calcHist([hsv], [1], None, [32], [0, 256]).flatten()
+    hist_h = hist_h / (hist_h.sum() + 1e-6)
+    hist_s = hist_s / (hist_s.sum() + 1e-6)
+
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    hog_feat = hog(
+        gray, orientations=9, pixels_per_cell=(16, 16),
+        cells_per_block=(2, 2), feature_vector=True,
+    )
+    return np.concatenate([hist_h, hist_s, hog_feat]).reshape(1, -1)
+
+
+def _guess_produce_type_trained_model(image_bytes: bytes):
+    """
+    Uses the trained RandomForest classifier (produce_type_classifier.joblib)
+    instead of the manual hue/aspect-ratio heuristic. Trained on Fruits-360
+    (studio-lit, plain-background photos), so treat confidence as optimistic
+    versus real mandi/market photos - it hasn't seen messy backgrounds,
+    mixed lighting, or crates full of produce.
+
+    Returns (produce_type, confidence 0-TYPE_CONFIDENCE_CAP, note) - same
+    shape as _guess_produce_type_classical so callers don't need to care
+    which one answered.
+    """
+    if _type_model is None:
+        return None  # caller falls back to the heuristic
+
+    features = _extract_type_model_features(image_bytes)
+    proba = _type_model.predict_proba(features)[0]
+    best_idx = int(np.argmax(proba))
+    best_label = _type_model.classes_[best_idx]
+    raw_confidence = float(proba[best_idx])
+
+    # Same conservative cap philosophy as the old heuristic: hand-crafted
+    # features + a dataset that doesn't match real deployment photos means
+    # we shouldn't report the model's raw confidence at face value.
+    confidence = round(min(TYPE_CONFIDENCE_CAP, raw_confidence), 2)
+    note = f"trained model, raw_confidence~{raw_confidence:.2f}"
+    return best_label, confidence, note
 
 
 # Highest confidence the color/shape heuristic is allowed to report - kept
@@ -279,11 +386,12 @@ def _hue_score(hue: float, ranges) -> float:
     return best
 
 
-def _guess_produce_type_classical(hsv: np.ndarray):
+def _segment_produce(hsv: np.ndarray):
     """
     Segments the produce from a plain background, extracts dominant hue/
-    saturation + shape descriptors, and scores them against _PRODUCE_PROFILES.
-    Returns (produce_type_or_'unknown', confidence 0-TYPE_CONFIDENCE_CAP, note).
+    saturation + shape descriptors. Shared by both the type heuristic and
+    the ripeness heuristic below, so we only pay this cost once per image.
+    Returns a dict, or None if no distinct produce blob could be found.
     """
     import cv2
 
@@ -302,14 +410,14 @@ def _guess_produce_type_classical(hsv: np.ndarray):
 
     contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return "unknown", 0.0, "no distinct produce shape found against the background"
+        return None
 
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
     main = contours[0]
     area = cv2.contourArea(main)
     total_px = h_ch.size
     if area < total_px * 0.03:
-        return "unknown", 0.0, "produce too small in frame to analyze shape"
+        return None
 
     perimeter = cv2.arcLength(main, True)
     circularity = (4 * np.pi * area / (perimeter ** 2)) if perimeter > 0 else 0.0
@@ -345,6 +453,28 @@ def _guess_produce_type_classical(hsv: np.ndarray):
         aspect_for_scoring = aspect
         circularity_for_scoring = circularity
 
+    return {
+        "dominant_hue": dominant_hue,
+        "mean_sat": mean_sat,
+        "aspect": aspect_for_scoring,
+        "circularity": circularity_for_scoring,
+        "significant_blobs": significant_blobs,
+    }
+
+
+def _guess_produce_type_classical(seg: dict):
+    """
+    Scores the segmented produce's color/shape against _PRODUCE_PROFILES.
+    Returns (produce_type_or_'unknown', confidence 0-TYPE_CONFIDENCE_CAP, note).
+    """
+    if seg is None:
+        return "unknown", 0.0, "no distinct produce shape found against the background"
+
+    dominant_hue = seg["dominant_hue"]
+    mean_sat = seg["mean_sat"]
+    aspect_for_scoring = seg["aspect"]
+    circularity_for_scoring = seg["circularity"]
+
     scores = {}
     for produce, profile in _PRODUCE_PROFILES.items():
         hue_s = _hue_score(dominant_hue, profile["hue"])
@@ -364,6 +494,54 @@ def _guess_produce_type_classical(hsv: np.ndarray):
     confidence = round(min(TYPE_CONFIDENCE_CAP, best_score * TYPE_CONFIDENCE_CAP), 2)
     note = f"hue~{int(dominant_hue)}, aspect~{aspect_for_scoring:.2f}, circularity~{circularity_for_scoring:.2f}"
     return best_type, confidence, note
+
+
+# Ripeness color profiles - only for produce that visibly changes hue as it
+# ripens (climacteric/color-changing fruit). Each entry: the hue band it
+# sits in while unripe (usually green) vs its ripe/"done" color. Overripe
+# is inferred separately from defect_ratio (soft/dark spotting) rather than
+# a third hue band, since "overripe" mostly LOOKS like ripe + starting to
+# spoil rather than a clean third color.
+_RIPENESS_PROFILES = {
+    "tomato": {"unripe_hue": [(35, 85)], "ripe_hue": [(0, 8), (170, 179)]},
+    "banana": {"unripe_hue": [(38, 55)], "ripe_hue": [(22, 37)]},
+    "mango": {"unripe_hue": [(38, 55)], "ripe_hue": [(10, 30)]},
+    "papaya": {"unripe_hue": [(40, 85)], "ripe_hue": [(8, 25)]},
+    # apple varieties differ too much by cultivar (Granny Smith is green even
+    # when ripe) for a reliable hue-only rule - left out on purpose.
+}
+
+
+def _estimate_ripeness_classical(produce_type: str, seg: dict, defect_ratio: float):
+    """
+    Cheap hue-based ripeness estimate for the handful of produce types where
+    ripening = a clear, predictable color shift (green -> ripe color).
+    Returns (ripeness_label, confidence 0-1, note).
+    """
+    profile = _RIPENESS_PROFILES.get(produce_type)
+    if profile is None or seg is None:
+        return "not_applicable", 0.0, "ripeness not color-predictable for this produce type"
+
+    hue = seg["dominant_hue"]
+    unripe_score = _hue_score(hue, profile["unripe_hue"])
+    ripe_score = _hue_score(hue, profile["ripe_hue"])
+
+    if unripe_score < 0.15 and ripe_score < 0.15:
+        # Hue doesn't land clearly in either band - not confident enough to guess.
+        return "not_applicable", 0.0, f"hue~{int(hue)} didn't match a known ripening band"
+
+    if unripe_score >= ripe_score:
+        confidence = round(min(0.6, unripe_score), 2)
+        return "unripe", confidence, f"hue~{int(hue)} still in the green/unripe band"
+
+    # Hue says "ripe color" - but a lot of surface defect (soft/dark spotting)
+    # on top of that ripe color usually means it's tipped into overripe.
+    if defect_ratio > 0.12:
+        confidence = round(min(0.55, ripe_score), 2)
+        return "overripe", confidence, f"hue~{int(hue)} ripe-colored but {defect_ratio*100:.0f}% surface defect suggests overripe"
+
+    confidence = round(min(0.6, ripe_score), 2)
+    return "ripe", confidence, f"hue~{int(hue)} in the ripe-color band, low defect ratio"
 
 
 def analyze_produce_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
@@ -393,4 +571,9 @@ def analyze_produce_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> 
     result["shelf_life_adjustment_pct"] = QUALITY_SHELF_LIFE_ADJUSTMENT.get(
         result["quality_label"], 0.0
     )
+    # LLM paths (Gemini/Groq) return "ripeness" but no confidence score for it -
+    # only the classical fallback computes one from hue math. Default to a
+    # flat trust level for LLM answers so the field is always present.
+    result.setdefault("ripeness", "not_applicable")
+    result.setdefault("ripeness_confidence", 0.8 if not result["source"].startswith("classical_cv") else 0.5)
     return result
