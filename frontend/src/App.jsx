@@ -10,12 +10,15 @@ import MyBatches from "./components/MyBatches";
 import Marketplace from "./components/Marketplace";
 import BatchDetail from "./components/BatchDetail";
 import LocationMap from "./components/LocationMap";
+import LanguageToggle from "./components/LanguageToggle";
+import { useLanguage } from "./i18n/LanguageContext";
 import { Bell, MapPin } from "lucide-react";
 
 
 const SELLER_NAME = "Ramesh Yadav";
 
 export default function App() {
+  const { t } = useLanguage();
   const [page, setPage] = useState("dashboard");
   const [batches, setBatches] = useState([]);
   const [impact, setImpact] = useState(null);
@@ -56,13 +59,13 @@ export default function App() {
         <header className="bg-panel border-b border-border px-8 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-ink">
-              {page === "dashboard" && `Namaste, ${SELLER_NAME.split(" ")[0]}! 👋`}
-              {page === "add" && "Log a New Batch"}
-              {page === "batches" && "My Batches"}
-              {page === "marketplace" && "Marketplace"}
+              {page === "dashboard" && t("header.greeting", { name: SELLER_NAME.split(" ")[0] })}
+              {page === "add" && t("header.addTitle")}
+              {page === "batches" && t("header.batchesTitle")}
+              {page === "marketplace" && t("header.marketplaceTitle")}
             </h1>
             {page === "dashboard" && (
-              <p className="text-muted text-sm">Here's what's happening with your produce today.</p>
+              <p className="text-muted text-sm">{t("header.dashboardSubtitle")}</p>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -70,6 +73,7 @@ export default function App() {
               <MapPin size={14} />
               Azadpur Mandi, Delhi
             </div>
+            <LanguageToggle />
             <button className="w-9 h-9 rounded-full bg-canvas border border-border flex items-center justify-center text-muted relative">
               <Bell size={16} />
             </button>
@@ -79,8 +83,10 @@ export default function App() {
         <div className="p-8">
           {connectionError && (
             <div className="bg-donate-light border border-donate/30 text-donate rounded-lg px-4 py-3 mb-6 text-sm">
-              Can't reach the backend at <span className="font-mono">127.0.0.1:8000</span>.
-              Make sure it's running (<span className="font-mono">uvicorn app.main:app --reload</span>).
+              {t("connection.error", {
+                url: "127.0.0.1:8000",
+                command: "uvicorn app.main:app --reload",
+              })}
             </div>
           )}
 
