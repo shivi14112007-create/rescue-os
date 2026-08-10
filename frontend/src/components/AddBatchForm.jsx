@@ -3,6 +3,7 @@ import { previewBatch, createBatch, analyzeProduceImage } from "../api";
 import { getBrowserLocation, reverseGeocode } from "../geo";
 import ActionBadge from "./ActionBadge";
 import QualityBadge from "./QualityBadge";
+import RipenessBadge from "./RipenessBadge";
 import MicButton from "./MicButton";
 import SpeakButton from "./SpeakButton";
 import { useLanguage } from "../i18n/LanguageContext";
@@ -248,6 +249,8 @@ export default function AddBatchForm({
         quality_label: result.quality_label,
         quality_score: result.quality_score,
         vision_source: result.source,
+        ripeness: result.ripeness,
+        ripeness_confidence: result.ripeness_confidence,
       }));
     } catch (err) {
       setVisionError(
@@ -967,6 +970,11 @@ export default function AddBatchForm({
                             <QualityBadge
                               qualityLabel={visionResult.quality_label}
                               qualityScore={visionResult.quality_score}
+                              small
+                            />
+                            <RipenessBadge
+                              ripeness={visionResult.ripeness}
+                              ripenessConfidence={visionResult.ripeness_confidence}
                               small
                             />
                           </div>

@@ -59,9 +59,14 @@ class VisionAnalysisResponse(BaseModel):
     produce_confidence: float = Field(..., ge=0, le=1, examples=[0.92])
     quality_label: str = Field(..., examples=["good"], description="excellent | good | fair | poor | spoiled")
     quality_score: int = Field(..., ge=0, le=100, examples=[78])
+    ripeness: str = Field(
+        "not_applicable", examples=["ripe"],
+        description="unripe | ripe | overripe | not_applicable (root/leafy veg that don't ripen this way)",
+    )
+    ripeness_confidence: float = Field(0.0, ge=0, le=1, examples=[0.6])
     defects_observed: list[str] = Field(default_factory=list)
     reasoning: str = ""
-    source: str = Field(..., description="which provider answered: gemini:<model> / groq:<model> / classical_cv")
+    source: str = Field(..., description="which provider answered: gemini:<model> / groq:<model> / classical_cv+trained_model / classical_cv+heuristic")
     shelf_life_adjustment_pct: float = Field(
         0.0, description="Suggested nudge to the harvest-date shelf-life estimate based on visible quality."
     )

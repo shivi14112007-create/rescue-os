@@ -1,0 +1,20 @@
+{
+  "model": "RandomForestClassifier (sklearn)",
+  "features": "HSV color histogram (H+S) + HOG on grayscale, 100x100 resized",
+  "classes": [
+    "apple",
+    "banana",
+    "cauliflower",
+    "grapes",
+    "mango",
+    "onion",
+    "papaya",
+    "potato",
+    "tomato"
+  ],
+  "train_images": 5754,
+  "test_images": 1926,
+  "test_accuracy": 0.9912,
+  "trained_on": "Fruits-360 (Horea94/Fruit-Images-Dataset), subset of classes",
+  "note": "produce TYPE classifier only - no freshness/quality-labeled dataset was reachable in this environment, so quality grading still uses the classical CV heuristic in vision.py"
+}
