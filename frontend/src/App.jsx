@@ -16,11 +16,7 @@ import RescueCertificate from "./components/RescueCertificate";
 import LanguageToggle from "./components/LanguageToggle";
 import { useLanguage } from "./i18n/LanguageContext";
 
-import {
-  Bell,
-  MapPin,
-  Loader2,
-} from "lucide-react";
+import { Bell, MapPin, Loader2 } from "lucide-react";
 
 import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
@@ -34,34 +30,31 @@ export default function App() {
   // APP STATES
   // =========================
 
-  const [showLanding, setShowLanding] =
-    useState(true);
+  const [showLanding, setShowLanding] = useState(true);
 
-  const [showLogin, setShowLogin] =
-    useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem("rescueos-demo-user");
 
-  const [page, setPage] =
-    useState("dashboard");
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
 
-  const [batches, setBatches] =
-    useState([]);
+  const [page, setPage] = useState("dashboard");
 
-  const [impact, setImpact] =
-    useState(null);
+  const [batches, setBatches] = useState([]);
 
-  const [selectedBatch, setSelectedBatch] =
-    useState(null);
+  const [impact, setImpact] = useState(null);
 
-  const [certificateBatch, setCertificateBatch] =
-    useState(null);
+  const [selectedBatch, setSelectedBatch] = useState(null);
 
-  const [connectionError, setConnectionError] =
-    useState(false);
+  const [certificateBatch, setCertificateBatch] = useState(null);
 
-  const [currentLocation, setCurrentLocation] =
-    useState("Detecting location...");
+  const [connectionError, setConnectionError] = useState(false);
+
+  const [currentLocation, setCurrentLocation] = useState(
+    "Detecting location...",
+  );
 
   // =========================
   // BACKEND DATA
@@ -69,10 +62,7 @@ export default function App() {
 
   async function refresh() {
     try {
-      const [
-        batchList,
-        impactData,
-      ] = await Promise.all([
+      const [batchList, impactData] = await Promise.all([
         listBatches(),
         getImpact(),
       ]);
@@ -95,35 +85,26 @@ export default function App() {
 
   useEffect(() => {
     if (!navigator.geolocation) {
-      setCurrentLocation(
-        "Location unavailable"
-      );
+      setCurrentLocation("Location unavailable");
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        const {
-          latitude,
-          longitude,
-        } = position.coords;
+        const { latitude, longitude } = position.coords;
 
         try {
           const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`,
           );
 
           if (!response.ok) {
-            throw new Error(
-              "Location lookup failed"
-            );
+            throw new Error("Location lookup failed");
           }
 
-          const data =
-            await response.json();
+          const data = await response.json();
 
-          const address =
-            data.address || {};
+          const address = data.address || {};
 
           const location =
             address.city ||
@@ -133,32 +114,21 @@ export default function App() {
             address.county ||
             "Current Location";
 
-          const state =
-            address.state || "";
+          const state = address.state || "";
 
-          setCurrentLocation(
-            state
-              ? `${location}, ${state}`
-              : location
-          );
+          setCurrentLocation(state ? `${location}, ${state}` : location);
         } catch {
-          setCurrentLocation(
-            `${latitude.toFixed(
-              4
-            )}, ${longitude.toFixed(4)}`
-          );
+          setCurrentLocation(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
         }
       },
       () => {
-        setCurrentLocation(
-          "Location permission denied"
-        );
+        setCurrentLocation("Location permission denied");
       },
       {
         enableHighAccuracy: true,
         timeout: 10000,
         maximumAge: 300000,
-      }
+      },
     );
   }, []);
 
@@ -182,16 +152,30 @@ export default function App() {
     setShowLanding(false);
     setPage("dashboard");
   }
+  function handleDemoLogin() {
+    const demoUser = {
+      uid: "demo-user",
+      displayName: "Ved",
+      email: "demo@rescueos.app",
+      isDemo: true,
+    };
+    localStorage.setItem(
+    "rescueos-demo-user",
+    JSON.stringify(demoUser)
+    );
 
+    setUser(demoUser);
+
+    setShowLogin(false);
+    setShowLanding(false);
+    setPage("dashboard");
+  }
   // =========================
   // BATCH CREATED
   // =========================
 
   function handleBatchCreated(newBatch) {
-    setBatches((prev) => [
-      newBatch,
-      ...prev,
-    ]);
+    setBatches((prev) => [newBatch, ...prev]);
 
     getImpact()
       .then(setImpact)
@@ -206,11 +190,7 @@ export default function App() {
 
   function handleClaim(updatedBatch) {
     setBatches((prev) =>
-      prev.map((b) =>
-        b.id === updatedBatch.id
-          ? updatedBatch
-          : b
-      )
+      prev.map((b) => (b.id === updatedBatch.id ? updatedBatch : b)),
     );
 
     getImpact()
@@ -218,9 +198,7 @@ export default function App() {
       .catch(() => {});
 
     // Show rescue certificate
-    setCertificateBatch(
-      updatedBatch
-    );
+    setCertificateBatch(updatedBatch);
   }
 
   // =========================
@@ -228,13 +206,7 @@ export default function App() {
   // =========================
 
   if (showLanding) {
-    return (
-      <LandingPage
-        onGetStarted={
-          handleGetStarted
-        }
-      />
-    );
+    return <LandingPage onGetStarted={handleGetStarted} />;
   }
 
   // =========================
@@ -249,6 +221,7 @@ export default function App() {
           setShowLanding(true);
         }}
         onLogin={handleLogin}
+        onDemoLogin={handleDemoLogin}
       />
     );
   }
@@ -259,7 +232,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex bg-canvas text-ink">
-
       {/* =========================
           SIDEBAR
       ========================= */}
@@ -267,10 +239,7 @@ export default function App() {
       <Sidebar
         active={page}
         onNavigate={setPage}
-        sellerName={
-          user?.displayName ||
-          SELLER_NAME
-        }
+        sellerName={user?.displayName || SELLER_NAME}
       />
 
       {/* =========================
@@ -278,54 +247,32 @@ export default function App() {
       ========================= */}
 
       <main className="flex-1 min-w-0">
-
         {/* =========================
             HEADER
         ========================= */}
 
         <header className="bg-panel border-b border-border px-8 py-4 flex items-center justify-between">
-
           {/* HEADER LEFT */}
 
           <div>
             <h1 className="text-lg font-bold text-ink">
-
               {page === "dashboard" &&
-                t(
-                  "header.greeting",
-                  {
-                    name:
-                      user?.displayName?.split(
-                        " "
-                      )[0] ||
-                      SELLER_NAME.split(
-                        " "
-                      )[0],
-                  }
-                )}
+                t("header.greeting", {
+                  name:
+                    user?.displayName?.split(" ")[0] ||
+                    SELLER_NAME.split(" ")[0],
+                })}
 
-              {page === "add" &&
-                t(
-                  "header.addTitle"
-                )}
+              {page === "add" && t("header.addTitle")}
 
-              {page === "batches" &&
-                t(
-                  "header.batchesTitle"
-                )}
+              {page === "batches" && t("header.batchesTitle")}
 
-              {page === "marketplace" &&
-                t(
-                  "header.marketplaceTitle"
-                )}
-
+              {page === "marketplace" && t("header.marketplaceTitle")}
             </h1>
 
             {page === "dashboard" && (
               <p className="text-muted text-sm">
-                {t(
-                  "header.dashboardSubtitle"
-                )}
+                {t("header.dashboardSubtitle")}
               </p>
             )}
           </div>
@@ -333,25 +280,16 @@ export default function App() {
           {/* HEADER RIGHT */}
 
           <div className="flex items-center gap-3">
-
             {/* CURRENT LOCATION */}
 
             <div className="hidden sm:flex items-center gap-1.5 text-sm text-muted border border-border rounded-full px-3 py-1.5">
-
-              {currentLocation ===
-              "Detecting location..." ? (
-                <Loader2
-                  size={14}
-                  className="animate-spin"
-                />
+              {currentLocation === "Detecting location..." ? (
+                <Loader2 size={14} className="animate-spin" />
               ) : (
                 <MapPin size={14} />
               )}
 
-              <span>
-                {currentLocation}
-              </span>
-
+              <span>{currentLocation}</span>
             </div>
 
             {/* LANGUAGE */}
@@ -366,7 +304,6 @@ export default function App() {
             >
               <Bell size={16} />
             </button>
-
           </div>
         </header>
 
@@ -375,21 +312,14 @@ export default function App() {
         ========================= */}
 
         <div className="p-8">
-
           {/* CONNECTION ERROR */}
 
           {connectionError && (
             <div className="bg-donate-light border border-donate/30 text-donate rounded-lg px-4 py-3 mb-6 text-sm">
-
-              {t(
-                "connection.error",
-                {
-                  url: "127.0.0.1:8000",
-                  command:
-                    "uvicorn app.main:app --reload",
-                }
-              )}
-
+              {t("connection.error", {
+                url: "127.0.0.1:8000",
+                command: "uvicorn app.main:app --reload",
+              })}
             </div>
           )}
 
@@ -399,28 +329,17 @@ export default function App() {
 
           {page === "dashboard" && (
             <>
-              <StatCards
-                batches={batches}
-                impact={impact}
-              />
+              <StatCards batches={batches} impact={impact} />
 
-              <StatusOverview
-                batches={batches}
-              />
+              <StatusOverview batches={batches} />
 
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
-
                 <RecentBatchesTable
                   batches={batches}
-                  onSelect={
-                    setSelectedBatch
-                  }
+                  onSelect={setSelectedBatch}
                 />
 
-                <ImpactSnapshot
-                  batches={batches}
-                />
-
+                <ImpactSnapshot batches={batches} />
               </div>
 
               <LocationMap />
@@ -433,13 +352,8 @@ export default function App() {
 
           {page === "add" && (
             <AddBatchForm
-              sellerName={
-                user?.displayName ||
-                SELLER_NAME
-              }
-              onBatchCreated={
-                handleBatchCreated
-              }
+              sellerName={user?.displayName || SELLER_NAME}
+              onBatchCreated={handleBatchCreated}
             />
           )}
 
@@ -448,12 +362,7 @@ export default function App() {
           ========================= */}
 
           {page === "batches" && (
-            <MyBatches
-              batches={batches}
-              onSelect={
-                setSelectedBatch
-              }
-            />
+            <MyBatches batches={batches} onSelect={setSelectedBatch} />
           )}
 
           {/* =========================
@@ -463,15 +372,10 @@ export default function App() {
           {page === "marketplace" && (
             <Marketplace
               batches={batches}
-              onClaim={
-                handleClaim
-              }
-              onSelect={
-                setSelectedBatch
-              }
+              onClaim={handleClaim}
+              onSelect={setSelectedBatch}
             />
           )}
-
         </div>
       </main>
 
@@ -481,9 +385,7 @@ export default function App() {
 
       <BatchDetail
         batch={selectedBatch}
-        onClose={() =>
-          setSelectedBatch(null)
-        }
+        onClose={() => setSelectedBatch(null)}
       />
 
       {/* =========================
@@ -492,15 +394,9 @@ export default function App() {
 
       <RescueCertificate
         batch={certificateBatch}
-        sellerName={
-          user?.displayName ||
-          SELLER_NAME
-        }
-        onClose={() =>
-          setCertificateBatch(null)
-        }
+        sellerName={user?.displayName || SELLER_NAME}
+        onClose={() => setCertificateBatch(null)}
       />
-
     </div>
   );
 }
