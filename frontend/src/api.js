@@ -54,6 +54,11 @@ export async function completeBatch(id) {
   return handleResponse(res);
 }
 
+export async function getMatches(id) {
+  const res = await fetch(`${BASE_URL}/automation/${id}/match`);
+  return handleResponse(res);
+}
+
 export async function getImpact() {
   const res = await fetch(`${BASE_URL}/impact`);
   return handleResponse(res);

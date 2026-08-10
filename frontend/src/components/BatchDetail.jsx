@@ -2,6 +2,7 @@ import { X, Calendar, MapPin, Package, Thermometer, Sparkles, Phone } from "luci
 import { completeBatch } from "../api";
 import ActionBadge from "./ActionBadge";
 import ProduceImage from "./ProduceImage";
+import SuggestedMatches from "./SuggestedMatches";
 
 const TILE_BG = {
   hold: "bg-brand-light",
@@ -58,6 +59,8 @@ export default function BatchDetail({ batch, onClose, onComplete }) {
             <ActionBadge action={batch.recommended_action} discountPct={batch.discount_pct} />
             <p className="text-ink text-sm mt-3 leading-snug">{batch.agent_reasoning}</p>
           </div>
+
+          <SuggestedMatches batch={batch} />
 
           {batch.notes && (
             <div>
