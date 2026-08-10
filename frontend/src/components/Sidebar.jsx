@@ -1,13 +1,16 @@
 import { LayoutDashboard, Package, PlusCircle, Store, User } from "lucide-react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 const NAV_ITEMS = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "batches", label: "My Batches", icon: Package },
-  { key: "add", label: "Add Batch", icon: PlusCircle },
-  { key: "marketplace", label: "Marketplace", icon: Store },
+  { key: "dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
+  { key: "batches", labelKey: "nav.batches", icon: Package },
+  { key: "add", labelKey: "nav.add", icon: PlusCircle },
+  { key: "marketplace", labelKey: "nav.marketplace", icon: Store },
 ];
 
 export default function Sidebar({ active, onNavigate, sellerName }) {
+  const { t } = useLanguage();
+
   return (
     <aside className="w-60 shrink-0 bg-sidebar text-white flex flex-col min-h-screen">
       <div className="px-6 py-6 flex items-center gap-2.5 border-b border-white/10">
@@ -15,13 +18,13 @@ export default function Sidebar({ active, onNavigate, sellerName }) {
           RO
         </div>
         <div>
-          <div className="font-semibold text-[15px] leading-tight">Rescue OS</div>
-          <div className="text-[11px] text-white/50 leading-tight">Nourish Today, Waste Less</div>
+          <div className="font-semibold text-[15px] leading-tight">{t("app.name")}</div>
+          <div className="text-[11px] text-white/50 leading-tight">{t("app.tagline")}</div>
         </div>
       </div>
 
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-        {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
+        {NAV_ITEMS.map(({ key, labelKey, icon: Icon }) => (
           <button
             key={key}
             onClick={() => onNavigate(key)}
@@ -32,7 +35,7 @@ export default function Sidebar({ active, onNavigate, sellerName }) {
             }`}
           >
             <Icon size={18} strokeWidth={2} />
-            {label}
+            {t(labelKey)}
           </button>
         ))}
       </nav>
@@ -43,7 +46,7 @@ export default function Sidebar({ active, onNavigate, sellerName }) {
         </div>
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{sellerName || "Seller"}</div>
-          <div className="text-[11px] text-white/50">Mandi Trader</div>
+          <div className="text-[11px] text-white/50">{t("role.trader")}</div>
         </div>
       </div>
     </aside>

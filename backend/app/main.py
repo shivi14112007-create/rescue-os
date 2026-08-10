@@ -78,6 +78,7 @@ def preview_batch(batch: BatchPreviewRequest):
         quantity_kg=batch.quantity_kg,
         location=batch.location,
         storage_condition=batch.storage_condition,
+        language=batch.language,
     )
 
     discounted_price = None
@@ -111,6 +112,7 @@ def create_batch(batch: BatchCreate):
         quantity_kg=batch.quantity_kg,
         location=batch.location,
         storage_condition=batch.storage_condition,
+        language=batch.language,
     )
 
     with get_conn() as conn:

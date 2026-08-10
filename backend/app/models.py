@@ -24,6 +24,12 @@ class BatchCreate(BaseModel):
     seller_name: Optional[str] = None
     price_per_kg: Optional[float] = Field(None, gt=0, examples=[30])
     notes: Optional[str] = None
+    language: Optional[str] = Field(
+        "en",
+        examples=["en", "hi", "bn", "ta", "te", "mr", "gu", "kn", "pa"],
+        description="ISO 639-1 code the seller's UI is in - used to ask the AI agent "
+                    "to write its reasoning in that language (falls back to English).",
+    )
 
 
 class BatchPreviewRequest(BatchCreate):
